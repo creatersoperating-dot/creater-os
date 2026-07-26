@@ -2,7 +2,7 @@ import { streamText } from "ai";
 import { google } from "@ai-sdk/google";
 
 import { Brand } from "@/types/brand";
-import { buildBrandContext } from "../brain/brandBrain";
+import { buildPrompt } from "../brain/promptBuilder";
 
 export async function runGemini(
   prompt: string,
@@ -13,11 +13,14 @@ export async function runGemini(
     !!process.env.GOOGLE_GENERATIVE_AI_API_KEY
   );
 
-  const systemPrompt = buildBrandContext(brand);
+  const aiPrompt = buildPrompt({
+    brand,
+    userPrompt: prompt,
+  });
 
   return streamText({
     model: google("gemini-3-flash-preview"),
-    system: systemPrompt,
-    prompt,
+    system: aiPrompt.system,
+    prompt: aiPrompt.prompt,
   });
 }
