@@ -1,244 +1,189 @@
 # CreatorOS Architecture
 
-## Vision
-
-CreatorOS is an AI Operating System that manages multiple YouTube channels from one dashboard.
-
-Eventually the platform will:
-
-- Create YouTube channels
-- Manage channels
-- Research content
-- Generate scripts
-- Generate AI voice
-- Generate videos
-- Create thumbnails
-- Upload videos
-- Analyze analytics
-- Optimize growth
-
-The goal is to automate the complete content production pipeline.
+Version: v0.1
 
 ---
 
-# System Architecture
+# High Level Overview
+
+CreatorOS is an AI Operating System built using Next.js.
+
+The application is divided into four major layers.
 
 ```
-                CreatorOS
+UI
+↓
 
-                    │
+API
 
-    ┌───────────────┼────────────────┐
-    │               │                │
+↓
 
- Frontend        Backend          AI Engine
+Services
 
-    │               │                │
+↓
 
- Dashboard       API Server      AI Agents
-
-    │               │                │
-
- Database      YouTube API      OpenAI APIs
-
+AI Providers
 ```
 
 ---
 
-# Project Structure
+# Folder Structure
 
 ```
-creater-os/
-
 frontend/
-    Dashboard
-    Channels
-    Analytics
-    Revenue
-    Settings
 
-backend/
-    APIs
-    Authentication
-    YouTube Integration
-    Scheduler
-
-ai/
-    Research Agent
-    Script Agent
-    SEO Agent
-    Thumbnail Agent
-    Voice Agent
-    Upload Agent
-    Analytics Agent
-
-database/
-    Prisma
-    Models
-    Migrations
-
-shared/
-    Types
-    Constants
-    Utils
-
+app/
+components/
+services/
 docs/
-    Architecture
-    Roadmap
-    API Docs
-
+public/
 ```
 
 ---
 
-# AI Agents
+# UI Layer
 
-## Research Agent
+Responsible for everything the user sees.
 
-Responsibilities
+Current components
 
-- Find trending topics
-- Competitor analysis
-- Keyword research
-- Video ideas
-
----
-
-## Script Agent
+```
+ChatWindow
+ChatInput
+ChatMessage
+TypingIndicator
+```
 
 Responsibilities
 
-- Generate scripts
-- Improve hooks
-- Improve retention
+- Render chat messages
+- Accept user input
+- Show typing state
+- Display AI responses
 
 ---
 
-## Voice Agent
+# API Layer
+
+Current endpoint
+
+```
+POST /api/chat
+```
 
 Responsibilities
 
-- AI narration
-- Voice selection
-- Audio cleanup
+- Receive chat requests
+- Validate input
+- Call AI services
+- Return streamed responses
 
 ---
 
-## Thumbnail Agent
+# Service Layer
+
+Current files
+
+```
+chatService.ts
+
+router.ts
+
+providers/
+    gemini.ts
+```
 
 Responsibilities
 
-- Thumbnail generation
-- Thumbnail A/B testing
+- Keep AI logic outside UI
+- Support multiple AI providers
+- Centralize AI routing
 
 ---
 
-## SEO Agent
+# AI Provider Layer
 
-Responsibilities
+Current provider
 
-- Title generation
-- Description
-- Tags
-- Chapters
+```
+Google Gemini
+```
 
----
+Future providers
 
-## Upload Agent
+```
+OpenAI
 
-Responsibilities
+Anthropic
 
-- Upload videos
-- Schedule videos
-- Add playlists
+xAI
 
----
-
-## Analytics Agent
-
-Responsibilities
-
-- Read YouTube Analytics
-- Growth reports
-- Revenue reports
-- Recommendations
+Local Models
+```
 
 ---
 
-# Future Roadmap
+# Current Request Flow
 
-Sprint 1
-Dashboard
+```
+User
 
-Sprint 2
-Create Channel Wizard
+↓
 
-Sprint 3
-Database
+ChatWindow
 
-Sprint 4
-Backend APIs
+↓
 
-Sprint 5
-YouTube Integration
+POST /api/chat
 
-Sprint 6
-AI Agents
+↓
 
-Sprint 7
-Automation
+chatService
 
-Sprint 8
-Scaling
+↓
+
+AI Router
+
+↓
+
+Gemini Provider
+
+↓
+
+Google API
+
+↓
+
+Response
+
+↓
+
+Browser
+```
 
 ---
 
-# Long-Term Goal
+# Design Principles
 
-A user should be able to click:
+- Modular
+- Provider Independent
+- Easily Extendable
+- Type Safe
+- Server-first AI Architecture
 
-Create AI Channel
+---
 
-↓
+# Planned Expansion
 
-CreatorOS automatically
+Upcoming modules
 
-Researches
-
-↓
-
-Writes Script
-
-↓
-
-Creates Voice
-
-↓
-
-Generates Video
-
-↓
-
-Creates Thumbnail
-
-↓
-
-Uploads to YouTube
-
-↓
-
-Optimizes SEO
-
-↓
-
-Tracks Revenue
-
-↓
-
-Learns from Analytics
-
-↓
-
-Improves Future Videos
-
-without manual intervention.
+- Brand Context
+- Conversation Memory
+- AI Agents
+- Knowledge Base
+- Prompt Library
+- Content Studio
+- Image Generation
+- Analytics
+- Scheduling
+- Team Collaboration
