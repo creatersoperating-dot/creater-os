@@ -2,59 +2,93 @@
 
 import { useState } from "react";
 
-interface BrandFormProps {
-  onSubmit: (brand: {
+import { Brand } from "@/types/brand";
+import { defaultBrand } from "@/lib/defaultBrand";
+
+import WizardSidebar from "./WizardSidebar";
+import WizardHeader from "./WizardHeader";
+import WizardProgress from "./WizardProgress";
+import WizardNavigation from "./WizardNavigation";
+import StepRenderer from "./StepRenderer";
+
+interface BrandWizardProps {
+  onSubmit: (data: {
     name: string;
     description: string;
   }) => void;
 }
 
-export default function BrandForm({
+export default function BrandWizard({
   onSubmit,
-}: BrandFormProps) {
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
+}: BrandWizardProps) {
+  const totalSteps = 6;
+
+  const [currentStep, setCurrentStep] = useState(1);
+
+  const [brand, setBrand] = useState<Brand>(defaultBrand);
+
+  function updateField(
+    field: keyof Brand,
+    value: string
+  ) {
+    setBrand((prev) => ({
+      ...prev,
+      [field]: value,
+    }));
+  }
+
+  function nextStep() {
+    if (currentStep < totalSteps) {
+      setCurrentStep((prev) => prev + 1);
+      return;
+    }
+
+    onSubmit({
+      name: brand.name,
+      description: brand.description,
+    });
+  }
+
+  function previousStep() {
+    if (currentStep > 1) {
+      setCurrentStep((prev) => prev - 1);
+    }
+  }
 
   return (
-    <div className="space-y-5">
-      <div>
-        <label className="block font-medium mb-2">
-          Brand Name
-        </label>
+    <div className="flex gap-8">
 
-        <input
-          className="w-full border rounded-lg p-3"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="Tech Explained"
+      <WizardSidebar
+        currentStep={currentStep}
+      />
+
+      <div className="flex-1">
+
+        <WizardHeader
+          title="Create Brand"
+          subtitle="Teach CreatorOS everything about your brand."
         />
+
+        <WizardProgress
+          currentStep={currentStep}
+          totalSteps={totalSteps}
+        />
+
+        <StepRenderer
+          currentStep={currentStep}
+          brand={brand}
+          updateField={updateField}
+        />
+
+        <WizardNavigation
+          currentStep={currentStep}
+          totalSteps={totalSteps}
+          onBack={previousStep}
+          onNext={nextStep}
+        />
+
       </div>
 
-      <div>
-        <label className="block font-medium mb-2">
-          Description
-        </label>
-
-        <textarea
-          className="w-full border rounded-lg p-3 h-32"
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-          placeholder="Describe your brand..."
-        />
-      </div>
-
-      <button
-        type="button"
-        onClick={() =>
-          onSubmit({
-            name,
-            description,
-          })
-        }
-        className="bg-blue-600 text-white px-5 py-3 rounded-xl"
-      >
-        Save Brand
-      </button>
     </div>
   );
 }

@@ -2,60 +2,60 @@ import { Brand } from "@/types/brand";
 
 export const brands: Brand[] = [
   {
-    id: "1",
-    name: "AI Explained",
-    description: "AI tutorials and news",
+    id: "TEST",
+
+    name: "THIS IS THE NEW BRAND",
+
+    tagline: "Testing",
+
+    description: "If you see this, the correct file is loading.",
+
+    logo: "",
+    website: "",
 
     primaryPlatform: "YouTube",
-
     language: "English",
-    targetCountry: "United States",
+    targetCountry: "Global",
+    targetAudience: "Everyone",
+    ageGroup: "",
+    experienceLevel: "",
 
-    niche: "Artificial Intelligence",
-    subNiche: "AI Tools",
+    primaryNiche: "Technology",
+    subNiche: "AI",
 
-    contentPillars: [
-      "AI News",
-      "Tutorials",
-      "Reviews"
-    ],
+    contentPillars: [],
+    keywords: [],
+    competitors: [],
+    uniqueValueProposition: "Testing",
 
-    targetAudience: "Developers",
-    tone: "Educational",
+    postingFrequency: "",
+    preferredFormats: [],
+    contentGoals: [],
+    contentStyle: "",
 
-    monetizationGoal: "Ads",
-
-    status: "Active",
-
-    createdAt: "2026-07-25"
-  },
-
-  {
-    id: "2",
-    name: "Finance Daily",
-    description: "Personal finance and investing",
-
-    primaryPlatform: "YouTube",
-
-    language: "English",
-    targetCountry: "India",
-
-    niche: "Finance",
-    subNiche: "Investing",
-
-    contentPillars: [
-      "Stocks",
-      "Mutual Funds",
-      "Credit Cards"
-    ],
-
-    targetAudience: "Young Professionals",
     tone: "Professional",
+    personality: "",
+    writingStyle: "Simple",
 
-    monetizationGoal: "Affiliate",
+    preferredWords: [],
+    forbiddenWords: [],
+    emojiStyle: "",
+
+    monetizationGoal: "",
+    revenueStreams: [],
+    targetSubscribers: 0,
+    targetRevenue: 0,
+
+    mission: "MISSION WORKS",
+    vision: "VISION WORKS",
+
+    coreValues: [],
+    thingsToAvoid: ["Clickbait"],
+    brandRules: ["Always be accurate"],
+    importantContext: "",
 
     status: "Draft",
-
-    createdAt: "2026-07-25"
-  }
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  },
 ];

@@ -6,9 +6,9 @@ import DashboardLayout from "@/components/layout/DashboardLayout";
 import { getBrands } from "@/services/brandService";
 import BrandCard from "@/components/channels/BrandCard";
 import Modal from "@/components/ui/Modal";
-import BrandForm from "@/components/brands/BrandForm";
+import BrandForm from "@/components/brands/BrandWizard";
 
-export default function ChannelsPage() {
+export default function BrandsPage() {
   const [brands, setBrands] = useState<Brand[]>(getBrands());
   const [isModalOpen, setIsModalOpen] = useState(false);
 
@@ -16,21 +16,65 @@ export default function ChannelsPage() {
     name: string;
     description: string;
   }) => {
+    const now = new Date().toISOString();
+
     const newBrand: Brand = {
+      // Identity
       id: Date.now().toString(),
       name: data.name,
+      tagline: "",
       description: data.description,
+      logo: "",
+      website: "",
+
+      // Audience
       primaryPlatform: "YouTube",
       language: "English",
       targetCountry: "Global",
-      niche: "General",
+      targetAudience: "",
+      ageGroup: "",
+      experienceLevel: "",
+
+      // Strategy
+      primaryNiche: "General",
       subNiche: "",
       contentPillars: [],
-      targetAudience: "",
+      keywords: [],
+      competitors: [],
+      uniqueValueProposition: "",
+
+      // Content
+      postingFrequency: "",
+      preferredFormats: [],
+      contentGoals: [],
+      contentStyle: "",
+
+      // Brand Voice
       tone: "Professional",
+      personality: "",
+      writingStyle: "",
+      preferredWords: [],
+      forbiddenWords: [],
+      emojiStyle: "",
+
+      // Business
       monetizationGoal: "",
+      revenueStreams: [],
+      targetSubscribers: 0,
+      targetRevenue: 0,
+
+      // AI Knowledge
+      mission: "",
+      vision: "",
+      coreValues: [],
+      thingsToAvoid: [],
+      brandRules: [],
+      importantContext: "",
+
+      // Metadata
       status: "Draft",
-      createdAt: new Date().toISOString(),
+      createdAt: now,
+      updatedAt: now,
     };
 
     setBrands((prev) => [...prev, newBrand]);
@@ -40,7 +84,7 @@ export default function ChannelsPage() {
   return (
     <DashboardLayout>
       <div className="flex justify-between items-center mb-8">
-        <h1 className="text-4xl font-bold">Your Channels</h1>
+        <h1 className="text-4xl font-bold">Your Brands</h1>
 
         <button
           onClick={() => setIsModalOpen(true)}

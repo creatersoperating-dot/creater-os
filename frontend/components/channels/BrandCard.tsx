@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { Brand } from "@/types/brand";
 
 interface BrandCardProps {
@@ -6,30 +7,38 @@ interface BrandCardProps {
 
 export default function BrandCard({ brand }: BrandCardProps) {
   return (
-    <div className="bg-white rounded-xl shadow p-6 hover:shadow-lg transition">
-      <h2 className="text-2xl font-bold">{brand.name}</h2>
+    <Link href={`/brands/${brand.id}`}>
+      <div className="bg-white rounded-xl shadow p-6 hover:shadow-xl hover:scale-[1.02] transition-all duration-200 cursor-pointer">
 
-      <p className="text-gray-500 mt-2">
-        {brand.description}
-      </p>
+        <h2 className="text-2xl font-bold">
+          {brand.name}
+        </h2>
 
-      <div className="mt-4 space-y-2 text-sm">
-        <p>
-          <strong>Platform:</strong> {brand.primaryPlatform}
+        <p className="text-gray-500 mt-2">
+          {brand.description}
         </p>
 
-        <p>
-          <strong>Niche:</strong> {brand.niche}
-        </p>
+        <div className="mt-4 space-y-2 text-sm">
 
-        <p>
-          <strong>Language:</strong> {brand.language}
-        </p>
+          <p>
+            <strong>Platform:</strong> {brand.primaryPlatform}
+          </p>
 
-        <p>
-          <strong>Status:</strong> {brand.status}
-        </p>
+          <p>
+            <strong>Niche:</strong> {brand.primaryNiche}
+          </p>
+
+          <p>
+            <strong>Audience:</strong> {brand.targetAudience}
+          </p>
+
+          <p>
+            <strong>Status:</strong> {brand.status}
+          </p>
+
+        </div>
+
       </div>
-    </div>
+    </Link>
   );
 }

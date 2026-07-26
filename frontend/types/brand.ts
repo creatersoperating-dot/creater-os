@@ -1,34 +1,71 @@
-export type Platform = "YouTube";
+export type Platform =
+  | "YouTube"
+  | "Instagram"
+  | "TikTok"
+  | "LinkedIn"
+  | "X"
+  | "Facebook";
 
-export type BrandStatus = "Draft" | "Active";
+export type BrandStatus =
+  | "Draft"
+  | "Active"
+  | "Archived";
 
 export interface Brand {
-  id: string;
-
   // Identity
+  id: string;
   name: string;
+  tagline: string;
   description: string;
+  logo?: string;
+  website?: string;
 
-  // Publishing
+  // Audience
   primaryPlatform: Platform;
   language: string;
   targetCountry: string;
+  targetAudience: string;
+  ageGroup: string;
+  experienceLevel: string;
 
-  // Content
-  niche: string;
+  // Strategy
+  primaryNiche: string;
   subNiche: string;
   contentPillars: string[];
+  keywords: string[];
+  competitors: string[];
+  uniqueValueProposition: string;
 
-  // Audience
-  targetAudience: string;
+  // Content
+  postingFrequency: string;
+  preferredFormats: string[];
+  contentGoals: string[];
+  contentStyle: string;
+
+  // Brand Voice
   tone: string;
+  personality: string;
+  writingStyle: string;
+  preferredWords: string[];
+  forbiddenWords: string[];
+  emojiStyle: string;
 
   // Business
   monetizationGoal: string;
+  revenueStreams: string[];
+  targetSubscribers: number;
+  targetRevenue: number;
 
-  // Status
-  status: BrandStatus;
+  // AI Knowledge
+  mission: string;
+  vision: string;
+  coreValues: string[];
+  thingsToAvoid: string[];
+  brandRules: string[];
+  importantContext: string;
 
   // Metadata
+  status: BrandStatus;
   createdAt: string;
+  updatedAt: string;
 }
