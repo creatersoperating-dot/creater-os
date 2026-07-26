@@ -48,7 +48,7 @@ export default async function BrandWorkspace({
           </p>
         </div>
 
-        <ChatWindow />
+        <ChatWindow brand={brand} />
       </div>
     </DashboardLayout>
   );

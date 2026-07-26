@@ -2,21 +2,30 @@
 
 import { useState } from "react";
 
+import { Brand } from "@/types/brand";
+
 import ChatMessage from "./ChatMessage";
 import ChatInput from "./ChatInput";
 import TypingIndicator from "./TypingIndicator";
+
+interface ChatWindowProps {
+  brand: Brand;
+}
 
 interface Message {
   role: "user" | "assistant";
   content: string;
 }
 
-export default function ChatWindow() {
+export default function ChatWindow({
+  brand,
+}: ChatWindowProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(false);
 
   async function sendMessage(message: string) {
     console.log("✅ sendMessage called");
+    console.log("Brand:", brand.name);
     console.log("Message:", message);
 
     // Show user message immediately
@@ -40,6 +49,7 @@ export default function ChatWindow() {
         },
         body: JSON.stringify({
           message,
+          brand,
         }),
       });
 

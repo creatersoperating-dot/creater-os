@@ -1,32 +1,34 @@
 import { chat } from "@/services/ai/chatService";
+import { Brand } from "@/types/brand";
 
 export async function POST(req: Request) {
   try {
-    const { message } = await req.json();
+    const {
+      message,
+      brand,
+    }: {
+      message: string;
+      brand: Brand;
+    } = await req.json();
+    console.log("Message:", message);
+console.log("Brand:", brand);
 
-    console.log("Incoming message:", message);
+    const result = await chat(message, brand);
 
-    const result = await chat(message);
-
-    let text = "";
-
-    for await (const chunk of result.textStream) {
-      console.log("Chunk:", chunk);
-      text += chunk;
-    }
-
-    console.log("Final text:", text);
-
-    return new Response(text, {
-      headers: {
-        "Content-Type": "text/plain",
-      },
-    });
+    return result.toTextStreamResponse();
   } catch (error) {
-    console.error("API ERROR:", error);
+    console.error(error);
 
-    return new Response("ERROR", {
-      status: 500,
-    });
+    return new Response(
+      JSON.stringify({
+        error: "AI request failed.",
+      }),
+      {
+        status: 500,
+        headers: {
+          "Content-Type": "application/json",
+        },
+      }
+    );
   }
 }
