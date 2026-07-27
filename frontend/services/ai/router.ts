@@ -10,6 +10,7 @@ export interface AIRequest {
   provider: AIProvider;
   prompt: string;
   brand: Brand;
+  sessionId: string;
 }
 
 export async function runAI(request: AIRequest) {
@@ -17,7 +18,8 @@ export async function runAI(request: AIRequest) {
     case "gemini":
       return runGemini(
         request.prompt,
-        request.brand
+        request.brand,
+        request.sessionId
       );
 
     case "openai":

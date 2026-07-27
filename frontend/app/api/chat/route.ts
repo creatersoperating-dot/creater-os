@@ -6,18 +6,26 @@ export async function POST(req: Request) {
     const {
       message,
       brand,
+      sessionId,
     }: {
       message: string;
       brand: Brand;
+      sessionId: string;
     } = await req.json();
-    console.log("Message:", message);
-console.log("Brand:", brand);
 
-    const result = await chat(message, brand);
+    console.log("Message:", message);
+    console.log("Brand:", brand.name);
+    console.log("Session:", sessionId);
+
+    const result = await chat(
+      message,
+      brand,
+      sessionId
+    );
 
     return result.toTextStreamResponse();
   } catch (error) {
-    console.error(error);
+    console.error("API ERROR:", error);
 
     return new Response(
       JSON.stringify({

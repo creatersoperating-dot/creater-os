@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { Brand } from "@/types/brand";
 
@@ -22,13 +22,29 @@ export default function ChatWindow({
 }: ChatWindowProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(false);
+  const [sessionId, setSessionId] = useState("");
+
+  useEffect(() => {
+    const existing = localStorage.getItem("creatoros-session");
+
+    if (existing) {
+      setSessionId(existing);
+      return;
+    }
+
+    const id = crypto.randomUUID();
+
+    localStorage.setItem("creatoros-session", id);
+
+    setSessionId(id);
+  }, []);
 
   async function sendMessage(message: string) {
     console.log("✅ sendMessage called");
     console.log("Brand:", brand.name);
     console.log("Message:", message);
+    console.log("Session:", sessionId);
 
-    // Show user message immediately
     setMessages((prev) => [
       ...prev,
       {
@@ -50,6 +66,7 @@ export default function ChatWindow({
         body: JSON.stringify({
           message,
           brand,
+          sessionId,
         }),
       });
 

@@ -3,11 +3,13 @@ import { runAI } from "./router";
 
 export async function chat(
   message: string,
-  brand: Brand
+  brand: Brand,
+  sessionId: string
 ) {
   return runAI({
     provider: "gemini",
     prompt: message,
     brand,
+    sessionId,
   });
 }
