@@ -101,3 +101,29 @@ Planned Features
 - AI Brain
 - Streaming improvements
 - Better error handling
+
+## v0.2
+
+### Added
+
+- Brand AI Brain
+- Prompt Builder
+- System Prompt
+- Brand Context
+- Server-side Brand Loading
+- Gemini Provider Refactor
+
+### Improved
+
+- AI now responds as the selected brand.
+- Prompt generation is modular.
+- Provider layer is isolated from business logic.
+
+## v0.3
+
+### Added
+
+- Conversation Memory
+- Session IDs
+- Prompt Builder now includes chat history
+- AI now remembers previous messages within a session

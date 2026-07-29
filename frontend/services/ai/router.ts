@@ -1,5 +1,4 @@
-import { Brand } from "@/types/brand";
-import { runGemini } from "./providers/gemini";
+import { runGemini } from "./models/gemini";
 
 export type AIProvider =
   | "openai"
@@ -9,18 +8,12 @@ export type AIProvider =
 export interface AIRequest {
   provider: AIProvider;
   prompt: string;
-  brand: Brand;
-  sessionId: string;
 }
 
 export async function runAI(request: AIRequest) {
   switch (request.provider) {
     case "gemini":
-      return runGemini(
-        request.prompt,
-        request.brand,
-        request.sessionId
-      );
+      return runGemini(request.prompt);
 
     case "openai":
       throw new Error("OpenAI provider not implemented yet.");

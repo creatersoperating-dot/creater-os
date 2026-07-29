@@ -1,18 +1,16 @@
-import { Brand } from "@/types/brand";
-import { buildScriptPrompt } from "../scriptService";
-import { runAI } from "../providers/router";
+import { Capability } from "../capabilities/capabilities";
+import { executeTask } from "../tasks/executeTask";
+import type { Brand } from "@/types/brand";
 
 export async function generateScript(
   brand: Brand,
-  topic: string
+  topic: string,
+  sessionId: string
 ) {
-  const prompt = buildScriptPrompt(
+  return executeTask({
+    capability: Capability.SCRIPT_WRITING,
+    input: topic,
     brand,
-    topic
-  );
-
-  return runAI({
-    provider: "openai",
-    prompt,
+    sessionId,
   });
 }

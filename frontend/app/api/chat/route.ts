@@ -1,4 +1,5 @@
-import { chat } from "@/services/ai/chatService";
+import { executeTask } from "@/services/ai/tasks/executeTask";
+import { Capability } from "@/services/ai/capabilities/capabilities";
 import { Brand } from "@/types/brand";
 
 export async function POST(req: Request) {
@@ -13,15 +14,12 @@ export async function POST(req: Request) {
       sessionId: string;
     } = await req.json();
 
-    console.log("Message:", message);
-    console.log("Brand:", brand.name);
-    console.log("Session:", sessionId);
-
-    const result = await chat(
-      message,
+    const result = await executeTask({
+      capability: Capability.CHAT,
+      input: message,
       brand,
-      sessionId
-    );
+      sessionId,
+    });
 
     return result.toTextStreamResponse();
   } catch (error) {
