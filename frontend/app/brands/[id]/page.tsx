@@ -2,6 +2,7 @@ import DashboardLayout from "@/components/layout/DashboardLayout";
 import { getBrandById } from "@/services/brandService";
 import ChatWindow from "@/components/ai/ChatWindow";
 import ScriptWriter from "@/components/scripts/ScriptWriter";
+import ScriptLibrary from "@/components/scripts/ScriptLibrary";
 
 interface BrandWorkspaceProps {
   params: Promise<{
@@ -41,7 +42,8 @@ export default async function BrandWorkspace({
       <div className="-m-8 min-h-screen bg-slate-50 p-4 sm:p-6 lg:p-8">
         <div className="mx-auto max-w-[1500px] space-y-10">
           <section aria-label="Script Writer workspace">
-            <ScriptWriter brand={brand} />
+      <ScriptWriter brand={brand} />
+      <ScriptLibrary brandId={brand.id} />
           </section>
 
           <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-[0_20px_60px_-30px_rgba(15,23,42,0.4)]">
