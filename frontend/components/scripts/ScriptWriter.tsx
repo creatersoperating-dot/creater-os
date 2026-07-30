@@ -1,6 +1,11 @@
 "use client";
 
 import {
+  createScript,
+  updateScript,
+} from "@/services/scriptService";
+
+import {
   Check,
   Copy,
   FileText,
@@ -125,8 +130,86 @@ export default function ScriptWriter({
     useState<ScriptFormValues | null>(null);
   const [sessionId, setSessionId] = useState("");
   const [script, setScript] = useState("");
+  const [savedScriptId, setSavedScriptId] = useState<string | null>(null);
+  const [isSavingToLibrary, setIsSavingToLibrary] = useState(false);
+  const [librarySaveFeedback, setLibrarySaveFeedback] = useState<{
+    type: "success" | "error";
+    message: string;
+  } | null>(null);
   const [error, setError] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
+  const saveToLibraryDisabled =
+    isGenerating ||
+    isSavingToLibrary ||
+    !script.trim() ||
+    !lastSubmittedValues?.topic.trim();
+
+  const handleSaveToLibrary = () => {
+    if (saveToLibraryDisabled) {
+      setLibrarySaveFeedback({
+        type: "error",
+        message: "Generate a complete script before saving.",
+      });
+      return;
+    }
+
+    const scriptTopic = lastSubmittedValues?.topic.trim() ?? "";
+    if (!scriptTopic) {
+      setLibrarySaveFeedback({
+        type: "error",
+        message: "A topic is required before saving.",
+      });
+      return;
+    }
+
+    setIsSavingToLibrary(true);
+    setLibrarySaveFeedback(null);
+
+    try {
+      if (savedScriptId) {
+        const updatedScript = updateScript(savedScriptId, {
+          topic: scriptTopic,
+          content: script,
+        });
+        if (!updatedScript) {
+          throw new Error("The saved script could not be found.");
+        }
+
+        setLibrarySaveFeedback({
+          type: "success",
+          message: "Saved script updated.",
+        });
+      } else {
+        const savedScript = createScript({
+          brandId: brand.id,
+          title: scriptTopic,
+          topic: scriptTopic,
+          content: script,
+        });
+        setSavedScriptId(savedScript.id);
+        setLibrarySaveFeedback({
+          type: "success",
+          message: "Script saved to your library.",
+        });
+      }
+
+      window.setTimeout(() => {
+        setLibrarySaveFeedback((current) =>
+          current?.type === "success" ? null : current,
+        );
+      }, 2500);
+    } catch (error) {
+      setLibrarySaveFeedback({
+        type: "error",
+        message:
+          error instanceof Error
+            ? error.message
+            : "Unable to save this script.",
+      });
+    } finally {
+      setIsSavingToLibrary(false);
+    }
+  };
   const [copied, setCopied] = useState(false);
   const copyFeedbackTimer = useRef<number | null>(null);
 
@@ -266,6 +349,12 @@ export default function ScriptWriter({
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    startNewGeneration();
+  }
+
+  function startNewGeneration() {
+    setSavedScriptId(null);
+    setLibrarySaveFeedback(null);
     void generateScript(formValues);
   }
 
@@ -318,7 +407,7 @@ export default function ScriptWriter({
     event.preventDefault();
 
     if (!submitDisabled) {
-      void generateScript(formValues);
+      startNewGeneration();
     }
   }
 
@@ -654,9 +743,36 @@ export default function ScriptWriter({
             </div>
 
             <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={handleRegenerate}
+            <button
+              type="button"
+              onClick={handleSaveToLibrary}
+              disabled={saveToLibraryDisabled}
+              className="rounded-lg bg-violet-600 px-3 py-2 text-sm font-semibold text-white transition hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {isSavingToLibrary
+                ? "Saving…"
+                : savedScriptId
+                  ? "Update Saved Script"
+                  : "Save to Library"}
+            </button>
+            {librarySaveFeedback && (
+              <span
+                className={
+                  librarySaveFeedback.type === "success"
+                    ? "text-sm font-medium text-emerald-600 dark:text-emerald-400"
+                    : "text-sm font-medium text-rose-600 dark:text-rose-400"
+                }
+                role="status"
+              >
+                {librarySaveFeedback.message}
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={() => {
+                setLibrarySaveFeedback(null);
+                handleRegenerate();
+              }}
                 disabled={
                   !lastSubmittedValues ||
                   !sessionId ||

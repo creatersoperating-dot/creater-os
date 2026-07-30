@@ -8,7 +8,21 @@ import type {
 // replace this service later without coupling script storage to the AI Core.
 const STORAGE_KEY = "creatoros:scripts:v1";
 
+export const SCRIPT_LIBRARY_CHANGED_EVENT = "creatoros:script-library-changed";
+
 let fallbackIdSequence = 0;
+
+function dispatchLibraryChanged(): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  try {
+    window.dispatchEvent(new Event(SCRIPT_LIBRARY_CHANGED_EVENT));
+  } catch {
+    // Persistence succeeded; event delivery is best-effort for local UI sync.
+  }
+}
 
 function getBrowserStorage(): Storage | null {
   if (typeof window === "undefined") {
@@ -166,6 +180,7 @@ export function createScript(input: CreateScriptInput): CreatorScript {
   };
 
   writeScripts([...readScripts(), script]);
+  dispatchLibraryChanged();
   return script;
 }
 
@@ -202,6 +217,7 @@ export function updateScript(
 
   scripts[index] = updated;
   writeScripts(scripts);
+  dispatchLibraryChanged();
   return updated;
 }
 
@@ -213,5 +229,6 @@ export function deleteScript(id: string): boolean {
   }
 
   writeScripts(remainingScripts);
+  dispatchLibraryChanged();
   return true;
 }

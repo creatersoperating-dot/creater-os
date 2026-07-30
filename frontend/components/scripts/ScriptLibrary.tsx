@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
+  SCRIPT_LIBRARY_CHANGED_EVENT,
   deleteScript,
   getScriptsByBrand,
   updateScript,
@@ -35,6 +36,7 @@ export default function ScriptLibrary({ brandId }: ScriptLibraryProps) {
   const [feedback, setFeedback] = useState<Feedback>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const draftScriptIdRef = useRef<string | null>(null);
 
   const selectedScript = useMemo(
     () => scripts.find((script) => script.id === selectedId) ?? null,
@@ -43,6 +45,7 @@ export default function ScriptLibrary({ brandId }: ScriptLibraryProps) {
 
   useEffect(() => {
     const brandScripts = getScriptsByBrand(brandId);
+    draftScriptIdRef.current = null;
     setScripts(brandScripts);
     setSelectedId(brandScripts[0]?.id ?? null);
     setFeedback(null);
@@ -50,12 +53,18 @@ export default function ScriptLibrary({ brandId }: ScriptLibraryProps) {
 
   useEffect(() => {
     if (!selectedScript) {
+      draftScriptIdRef.current = null;
       setTitle("");
       setTopic("");
       setContent("");
       return;
     }
 
+    if (draftScriptIdRef.current === selectedScript.id) {
+      return;
+    }
+
+    draftScriptIdRef.current = selectedScript.id;
     setTitle(selectedScript.title);
     setTopic(selectedScript.topic);
     setContent(selectedScript.content);
@@ -66,6 +75,37 @@ export default function ScriptLibrary({ brandId }: ScriptLibraryProps) {
     (title !== selectedScript.title ||
       topic !== selectedScript.topic ||
       content !== selectedScript.content);
+
+  useEffect(() => {
+    function refreshLibrary() {
+      const refreshedScripts = getScriptsByBrand(brandId);
+      const selectedStillExists = refreshedScripts.some(
+        (script) => script.id === selectedId,
+      );
+
+      if (hasUnsavedChanges && selectedScript && !selectedStillExists) {
+        setScripts([selectedScript, ...refreshedScripts]);
+        return;
+      }
+
+      if (selectedStillExists) {
+        if (!hasUnsavedChanges) {
+          draftScriptIdRef.current = null;
+        }
+        setScripts(refreshedScripts);
+        return;
+      }
+
+      draftScriptIdRef.current = null;
+      setScripts(refreshedScripts);
+      setSelectedId(refreshedScripts[0]?.id ?? null);
+    }
+
+    window.addEventListener(SCRIPT_LIBRARY_CHANGED_EVENT, refreshLibrary);
+    return () => {
+      window.removeEventListener(SCRIPT_LIBRARY_CHANGED_EVENT, refreshLibrary);
+    };
+  }, [brandId, hasUnsavedChanges, selectedId, selectedScript]);
 
   function selectScript(id: string) {
     if (id === selectedId) {
