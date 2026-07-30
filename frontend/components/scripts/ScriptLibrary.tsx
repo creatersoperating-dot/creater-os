@@ -3,11 +3,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
-  SCRIPT_LIBRARY_CHANGED_EVENT,
-  deleteScript,
-  getScriptsByBrand,
-  updateScript,
-} from "../../services/scriptService";
+  CLOUD_SCRIPT_LIBRARY_CHANGED_EVENT,
+  deleteCloudScript,
+  getCloudScriptsByBrand,
+  updateCloudScript,
+} from "@/services/cloudScriptService";
 import type { CreatorScript } from "../../types/script";
 
 interface ScriptLibraryProps {
@@ -29,6 +29,7 @@ function formatUpdatedAt(updatedAt: string): string {
 
 export default function ScriptLibrary({ brandId }: ScriptLibraryProps) {
   const [scripts, setScripts] = useState<CreatorScript[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [title, setTitle] = useState("");
   const [topic, setTopic] = useState("");
@@ -44,11 +45,38 @@ export default function ScriptLibrary({ brandId }: ScriptLibraryProps) {
   );
 
   useEffect(() => {
-    const brandScripts = getScriptsByBrand(brandId);
-    draftScriptIdRef.current = null;
-    setScripts(brandScripts);
-    setSelectedId(brandScripts[0]?.id ?? null);
+    let isActive = true;
     setFeedback(null);
+    setIsLoading(true);
+    draftScriptIdRef.current = null;
+    setScripts([]);
+    setSelectedId(null);
+
+    void getCloudScriptsByBrand(brandId)
+      .then((brandScripts) => {
+        if (!isActive) {
+          return;
+        }
+        setScripts(brandScripts);
+        setSelectedId(brandScripts[0]?.id ?? null);
+      })
+      .catch(() => {
+        if (isActive) {
+          setFeedback({
+            type: "error",
+            message: "Unable to load scripts. Please try again.",
+          });
+        }
+      })
+      .finally(() => {
+        if (isActive) {
+          setIsLoading(false);
+        }
+      });
+
+    return () => {
+      isActive = false;
+    };
   }, [brandId]);
 
   useEffect(() => {
@@ -77,8 +105,15 @@ export default function ScriptLibrary({ brandId }: ScriptLibraryProps) {
       content !== selectedScript.content);
 
   useEffect(() => {
-    function refreshLibrary() {
-      const refreshedScripts = getScriptsByBrand(brandId);
+    let isActive = true;
+
+    async function refreshLibrary() {
+      try {
+        const refreshedScripts = await getCloudScriptsByBrand(brandId);
+
+        if (!isActive) {
+          return;
+        }
       const selectedStillExists = refreshedScripts.some(
         (script) => script.id === selectedId,
       );
@@ -99,11 +134,26 @@ export default function ScriptLibrary({ brandId }: ScriptLibraryProps) {
       draftScriptIdRef.current = null;
       setScripts(refreshedScripts);
       setSelectedId(refreshedScripts[0]?.id ?? null);
+      } catch {
+        if (isActive) {
+          setFeedback({
+            type: "error",
+            message: "Unable to refresh scripts. Please try again.",
+          });
+        }
+      }
     }
 
-    window.addEventListener(SCRIPT_LIBRARY_CHANGED_EVENT, refreshLibrary);
+    window.addEventListener(
+      CLOUD_SCRIPT_LIBRARY_CHANGED_EVENT,
+      refreshLibrary,
+    );
     return () => {
-      window.removeEventListener(SCRIPT_LIBRARY_CHANGED_EVENT, refreshLibrary);
+      isActive = false;
+      window.removeEventListener(
+        CLOUD_SCRIPT_LIBRARY_CHANGED_EVENT,
+        refreshLibrary,
+      );
     };
   }, [brandId, hasUnsavedChanges, selectedId, selectedScript]);
 
@@ -133,7 +183,7 @@ export default function ScriptLibrary({ brandId }: ScriptLibraryProps) {
     setFeedback(null);
   }
 
-  function handleSave() {
+  async function handleSave() {
     if (!selectedScript) {
       return;
     }
@@ -150,7 +200,7 @@ export default function ScriptLibrary({ brandId }: ScriptLibraryProps) {
     setFeedback(null);
 
     try {
-      const updatedScript = updateScript(selectedScript.id, {
+      const updatedScript = await updateCloudScript(selectedScript.id, {
         title,
         topic,
         content,
@@ -160,7 +210,7 @@ export default function ScriptLibrary({ brandId }: ScriptLibraryProps) {
         throw new Error("This script could not be found.");
       }
 
-      const refreshedScripts = getScriptsByBrand(brandId);
+      const refreshedScripts = await getCloudScriptsByBrand(brandId);
       setScripts(refreshedScripts);
       setSelectedId(updatedScript.id);
       setTitle(updatedScript.title);
@@ -183,7 +233,7 @@ export default function ScriptLibrary({ brandId }: ScriptLibraryProps) {
     }
   }
 
-  function handleDelete() {
+  async function handleDelete() {
     if (!selectedScript) {
       return;
     }
@@ -202,12 +252,12 @@ export default function ScriptLibrary({ brandId }: ScriptLibraryProps) {
       const deletedIndex = scripts.findIndex(
         (script) => script.id === selectedScript.id,
       );
-      const didDelete = deleteScript(selectedScript.id);
+      const didDelete = await deleteCloudScript(selectedScript.id);
       if (!didDelete) {
         throw new Error("This script could not be deleted.");
       }
 
-      const refreshedScripts = getScriptsByBrand(brandId);
+      const refreshedScripts = await getCloudScriptsByBrand(brandId);
       const nextIndex = Math.min(
         Math.max(deletedIndex, 0),
         refreshedScripts.length - 1,
@@ -244,7 +294,11 @@ export default function ScriptLibrary({ brandId }: ScriptLibraryProps) {
         </div>
       </header>
 
-      {scripts.length === 0 ? (
+      {isLoading ? (
+        <div className="flex min-h-48 items-center justify-center text-sm text-slate-500">
+          Loading scripts...
+        </div>
+      ) : scripts.length === 0 ? (
         <div className="flex min-h-80 flex-col items-center justify-center px-6 py-14 text-center">
           <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-violet-100 text-violet-600 dark:bg-violet-400/10 dark:text-violet-300">
             <svg
