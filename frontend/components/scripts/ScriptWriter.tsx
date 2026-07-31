@@ -1,9 +1,9 @@
 "use client";
 
 import {
-  createScript,
-  updateScript,
-} from "@/services/scriptService";
+  createCloudScript,
+  updateCloudScript,
+} from "@/services/cloudScriptService";
 
 import {
   Check,
@@ -144,7 +144,7 @@ export default function ScriptWriter({
     !script.trim() ||
     !lastSubmittedValues?.topic.trim();
 
-  const handleSaveToLibrary = () => {
+  const handleSaveToLibrary = async () => {
     if (saveToLibraryDisabled) {
       setLibrarySaveFeedback({
         type: "error",
@@ -167,7 +167,7 @@ export default function ScriptWriter({
 
     try {
       if (savedScriptId) {
-        const updatedScript = updateScript(savedScriptId, {
+        const updatedScript = await updateCloudScript(savedScriptId, {
           topic: scriptTopic,
           content: script,
         });
@@ -180,7 +180,7 @@ export default function ScriptWriter({
           message: "Saved script updated.",
         });
       } else {
-        const savedScript = createScript({
+        const savedScript = await createCloudScript({
           brandId: brand.id,
           title: scriptTopic,
           topic: scriptTopic,

@@ -12,10 +12,7 @@ import WizardNavigation from "./WizardNavigation";
 import StepRenderer from "./StepRenderer";
 
 interface BrandWizardProps {
-  onSubmit: (data: {
-    name: string;
-    description: string;
-  }) => void;
+  onSubmit: (brand: Brand) => void | Promise<void>;
 }
 
 export default function BrandWizard({
@@ -43,10 +40,7 @@ export default function BrandWizard({
       return;
     }
 
-    onSubmit({
-      name: brand.name,
-      description: brand.description,
-    });
+      void onSubmit(brand);
   }
 
   function previousStep() {

@@ -1,5 +1,5 @@
 import DashboardLayout from "@/components/layout/DashboardLayout";
-import { getBrandById } from "@/services/brandService";
+import { getServerCloudBrandById } from "@/services/serverCloudBrandService";
 import ChatWindow from "@/components/ai/ChatWindow";
 import ScriptWriter from "@/components/scripts/ScriptWriter";
 import ScriptLibrary from "@/components/scripts/ScriptLibrary";
@@ -15,7 +15,7 @@ export default async function BrandWorkspace({
 }: BrandWorkspaceProps) {
   const { id } = await params;
 
-  const brand = getBrandById(id);
+  const brand = await getServerCloudBrandById(id);
 
   if (!brand) {
     return (

@@ -3,12 +3,17 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
-  SCRIPT_LIBRARY_CHANGED_EVENT,
-  deleteScript,
-  getScriptsByBrand,
-  updateScript,
-} from "../../services/scriptService";
+  CLOUD_SCRIPT_LIBRARY_CHANGED_EVENT,
+  deleteCloudScript,
+  getCloudScriptsByBrand,
+  updateCloudScript,
+} from "@/services/cloudScriptService";
 import type { CreatorScript } from "../../types/script";
+
+import {
+  getLocalScriptCount,
+  importLocalScriptsToBrand,
+} from "@/services/localScriptImportService";
 
 interface ScriptLibraryProps {
   brandId: string;
@@ -29,6 +34,9 @@ function formatUpdatedAt(updatedAt: string): string {
 
 export default function ScriptLibrary({ brandId }: ScriptLibraryProps) {
   const [scripts, setScripts] = useState<CreatorScript[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [localScriptCount, setLocalScriptCount] = useState(0);
+  const [isImporting, setIsImporting] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [title, setTitle] = useState("");
   const [topic, setTopic] = useState("");
@@ -44,11 +52,42 @@ export default function ScriptLibrary({ brandId }: ScriptLibraryProps) {
   );
 
   useEffect(() => {
-    const brandScripts = getScriptsByBrand(brandId);
-    draftScriptIdRef.current = null;
-    setScripts(brandScripts);
-    setSelectedId(brandScripts[0]?.id ?? null);
+    setLocalScriptCount(getLocalScriptCount());
+  }, [brandId]);
+
+  useEffect(() => {
+    let isActive = true;
     setFeedback(null);
+    setIsLoading(true);
+    draftScriptIdRef.current = null;
+    setScripts([]);
+    setSelectedId(null);
+
+    void getCloudScriptsByBrand(brandId)
+      .then((brandScripts) => {
+        if (!isActive) {
+          return;
+        }
+        setScripts(brandScripts);
+        setSelectedId(brandScripts[0]?.id ?? null);
+      })
+      .catch(() => {
+        if (isActive) {
+          setFeedback({
+            type: "error",
+            message: "Unable to load scripts. Please try again.",
+          });
+        }
+      })
+      .finally(() => {
+        if (isActive) {
+          setIsLoading(false);
+        }
+      });
+
+    return () => {
+      isActive = false;
+    };
   }, [brandId]);
 
   useEffect(() => {
@@ -77,8 +116,15 @@ export default function ScriptLibrary({ brandId }: ScriptLibraryProps) {
       content !== selectedScript.content);
 
   useEffect(() => {
-    function refreshLibrary() {
-      const refreshedScripts = getScriptsByBrand(brandId);
+    let isActive = true;
+
+    async function refreshLibrary() {
+      try {
+        const refreshedScripts = await getCloudScriptsByBrand(brandId);
+
+        if (!isActive) {
+          return;
+        }
       const selectedStillExists = refreshedScripts.some(
         (script) => script.id === selectedId,
       );
@@ -99,11 +145,26 @@ export default function ScriptLibrary({ brandId }: ScriptLibraryProps) {
       draftScriptIdRef.current = null;
       setScripts(refreshedScripts);
       setSelectedId(refreshedScripts[0]?.id ?? null);
+      } catch {
+        if (isActive) {
+          setFeedback({
+            type: "error",
+            message: "Unable to refresh scripts. Please try again.",
+          });
+        }
+      }
     }
 
-    window.addEventListener(SCRIPT_LIBRARY_CHANGED_EVENT, refreshLibrary);
+    window.addEventListener(
+      CLOUD_SCRIPT_LIBRARY_CHANGED_EVENT,
+      refreshLibrary,
+    );
     return () => {
-      window.removeEventListener(SCRIPT_LIBRARY_CHANGED_EVENT, refreshLibrary);
+      isActive = false;
+      window.removeEventListener(
+        CLOUD_SCRIPT_LIBRARY_CHANGED_EVENT,
+        refreshLibrary,
+      );
     };
   }, [brandId, hasUnsavedChanges, selectedId, selectedScript]);
 
@@ -133,7 +194,74 @@ export default function ScriptLibrary({ brandId }: ScriptLibraryProps) {
     setFeedback(null);
   }
 
-  function handleSave() {
+  async function handleImportLocalScripts() {
+    if (isImporting || isSaving || isDeleting) {
+      return;
+    }
+
+    const confirmed = window.confirm(
+      "Local scripts will be copied into the currently open cloud brand. The local copies will remain unchanged. Continue?",
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setIsImporting(true);
+    setFeedback(null);
+
+    try {
+      const result = await importLocalScriptsToBrand(brandId);
+      const refreshedScripts = await getCloudScriptsByBrand(brandId);
+      const scriptsWithDraft =
+        hasUnsavedChanges && selectedScript
+          ? refreshedScripts.some(
+              (script) => script.id === selectedScript.id,
+            )
+            ? refreshedScripts.map((script) =>
+                script.id === selectedScript.id
+                  ? selectedScript
+                  : script,
+              )
+            : [selectedScript, ...refreshedScripts]
+          : refreshedScripts;
+
+      setScripts(scriptsWithDraft);
+      setSelectedId((currentSelectedId) =>
+        currentSelectedId &&
+        scriptsWithDraft.some(
+          (script) => script.id === currentSelectedId,
+        )
+          ? currentSelectedId
+          : scriptsWithDraft[0]?.id ?? null,
+      );
+
+      const duplicateLabel =
+        result.skipped === 1 ? "duplicate" : "duplicates";
+
+      setFeedback({
+        type: "success",
+        message:
+          result.imported > 0
+            ? `Imported ${result.imported} local ${
+                result.imported === 1 ? "script" : "scripts"
+              }. ${result.skipped} ${duplicateLabel} skipped.`
+            : `No new scripts were imported. ${result.skipped} ${duplicateLabel} skipped.`,
+      });
+    } catch (error) {
+      setFeedback({
+        type: "error",
+        message:
+          error instanceof Error
+            ? error.message
+            : "Unable to import local scripts.",
+      });
+    } finally {
+      setIsImporting(false);
+    }
+  }
+
+  async function handleSave() {
     if (!selectedScript) {
       return;
     }
@@ -150,7 +278,7 @@ export default function ScriptLibrary({ brandId }: ScriptLibraryProps) {
     setFeedback(null);
 
     try {
-      const updatedScript = updateScript(selectedScript.id, {
+      const updatedScript = await updateCloudScript(selectedScript.id, {
         title,
         topic,
         content,
@@ -160,7 +288,7 @@ export default function ScriptLibrary({ brandId }: ScriptLibraryProps) {
         throw new Error("This script could not be found.");
       }
 
-      const refreshedScripts = getScriptsByBrand(brandId);
+      const refreshedScripts = await getCloudScriptsByBrand(brandId);
       setScripts(refreshedScripts);
       setSelectedId(updatedScript.id);
       setTitle(updatedScript.title);
@@ -183,7 +311,7 @@ export default function ScriptLibrary({ brandId }: ScriptLibraryProps) {
     }
   }
 
-  function handleDelete() {
+  async function handleDelete() {
     if (!selectedScript) {
       return;
     }
@@ -202,12 +330,12 @@ export default function ScriptLibrary({ brandId }: ScriptLibraryProps) {
       const deletedIndex = scripts.findIndex(
         (script) => script.id === selectedScript.id,
       );
-      const didDelete = deleteScript(selectedScript.id);
+      const didDelete = await deleteCloudScript(selectedScript.id);
       if (!didDelete) {
         throw new Error("This script could not be deleted.");
       }
 
-      const refreshedScripts = getScriptsByBrand(brandId);
+      const refreshedScripts = await getCloudScriptsByBrand(brandId);
       const nextIndex = Math.min(
         Math.max(deletedIndex, 0),
         refreshedScripts.length - 1,
@@ -238,13 +366,31 @@ export default function ScriptLibrary({ brandId }: ScriptLibraryProps) {
           <h2 className="mt-1 text-2xl font-semibold tracking-tight text-slate-950 dark:text-white">
             Script Library
           </h2>
+          {localScriptCount > 0 && (
+            <button
+              type="button"
+              onClick={() => void handleImportLocalScripts()}
+              disabled={isImporting || isSaving || isDeleting}
+              className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {isImporting
+                ? "Importing..."
+                : `Import ${localScriptCount} Local ${
+                    localScriptCount === 1 ? "Script" : "Scripts"
+                  }`}
+            </button>
+          )}
         </div>
         <div className="w-fit rounded-full border border-violet-200 bg-white/80 px-3 py-1.5 text-sm font-medium text-slate-700 shadow-sm dark:border-violet-400/20 dark:bg-white/5 dark:text-slate-200">
           {scripts.length} saved {scripts.length === 1 ? "script" : "scripts"}
         </div>
       </header>
 
-      {scripts.length === 0 ? (
+      {isLoading ? (
+        <div className="flex min-h-48 items-center justify-center text-sm text-slate-500">
+          Loading scripts...
+        </div>
+      ) : scripts.length === 0 ? (
         <div className="flex min-h-80 flex-col items-center justify-center px-6 py-14 text-center">
           <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-violet-100 text-violet-600 dark:bg-violet-400/10 dark:text-violet-300">
             <svg
@@ -372,7 +518,7 @@ export default function ScriptLibrary({ brandId }: ScriptLibraryProps) {
                 <button
                   type="button"
                   onClick={handleDelete}
-                  disabled={isDeleting || isSaving}
+                  disabled={isDeleting || isSaving || isImporting}
                   className="rounded-xl border border-rose-200 px-4 py-2.5 text-sm font-semibold text-rose-600 transition hover:border-rose-300 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-rose-400/20 dark:text-rose-300 dark:hover:bg-rose-400/10"
                 >
                   {isDeleting ? "Deleting…" : "Delete"}
@@ -380,7 +526,12 @@ export default function ScriptLibrary({ brandId }: ScriptLibraryProps) {
                 <button
                   type="button"
                   onClick={handleSave}
-                  disabled={!hasUnsavedChanges || isSaving || isDeleting}
+                  disabled={
+                    !hasUnsavedChanges ||
+                    isSaving ||
+                    isDeleting ||
+                    isImporting
+                  }
                   className="rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-violet-600/20 transition hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-50 disabled:shadow-none"
                 >
                   {isSaving ? "Saving…" : "Save Changes"}

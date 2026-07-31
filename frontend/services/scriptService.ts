@@ -163,6 +163,10 @@ export function getScriptsByBrand(brandId: string): CreatorScript[] {
     );
 }
 
+export function getAllScripts(): CreatorScript[] {
+  return readScripts();
+}
+
 export function getScriptById(id: string): CreatorScript | null {
   return readScripts().find((script) => script.id === id) ?? null;
 }
