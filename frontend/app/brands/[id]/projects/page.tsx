@@ -1,18 +1,17 @@
 import DashboardLayout from "@/components/layout/DashboardLayout";
-import { redirect } from "next/navigation";
+import VideoProjectsWorkspace from "@/components/video-projects/VideoProjectsWorkspace";
 import { getServerCloudBrandById } from "@/services/serverCloudBrandService";
 
-interface BrandWorkspaceProps {
+interface BrandVideoProjectsPageProps {
   params: Promise<{
     id: string;
   }>;
 }
 
-export default async function BrandWorkspace({
+export default async function BrandVideoProjectsPage({
   params,
-}: BrandWorkspaceProps) {
+}: BrandVideoProjectsPageProps) {
   const { id } = await params;
-
   const brand = await getServerCloudBrandById(id);
 
   if (!brand) {
@@ -23,11 +22,11 @@ export default async function BrandWorkspace({
             Brand not found
           </h1>
 
-          <p className="text-gray-500 mt-2">
+          <p className="mt-2 text-gray-500">
             The requested brand does not exist.
           </p>
 
-          <pre className="mt-4 bg-gray-100 p-4 rounded">
+          <pre className="mt-4 rounded bg-gray-100 p-4">
             Requested ID: {id}
           </pre>
         </div>
@@ -35,5 +34,12 @@ export default async function BrandWorkspace({
     );
   }
 
-  redirect(`/brands/${brand.id}/projects`);
+  return (
+    <DashboardLayout>
+      <VideoProjectsWorkspace
+        brandId={brand.id}
+        brandName={brand.name}
+      />
+    </DashboardLayout>
+  );
 }

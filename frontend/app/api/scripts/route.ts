@@ -1,4 +1,5 @@
 import { generateScript } from "@/services/ai/agents/scriptAgent";
+import { createClient } from "@/lib/supabase/server";
 import type { Brand } from "@/types/brand";
 
 const MAX_TOPIC_LENGTH = 300;
@@ -45,6 +46,16 @@ function errorResponse(
 }
 
 export async function POST(req: Request) {
+  const supabase = await createClient();
+  const {
+    data: { user },
+    error: authError,
+  } = await supabase.auth.getUser();
+
+  if (authError || !user) {
+    return errorResponse("Authentication required.", 401);
+  }
+
   let body: unknown;
 
   try {
@@ -108,6 +119,8 @@ export async function POST(req: Request) {
       400
     );
   }
+
+  const authenticatedSessionId = `${user.id}:${sessionId}`;
 
   const brand = body.brand;
 
@@ -219,7 +232,7 @@ export async function POST(req: Request) {
     const result = await generateScript(
       brand,
       normalizedRequest,
-      sessionId
+      authenticatedSessionId
     );
 
     return result.toTextStreamResponse();
