@@ -42,18 +42,19 @@ export default async function BrandWorkspace({
     <DashboardLayout>
       <div className="-m-8 min-h-screen bg-slate-50 p-4 sm:p-6 lg:p-8">
         <div className="mx-auto max-w-[1500px] space-y-10">
-          <div className="flex justify-end">
+          <section
+            aria-label="Script Writer workspace"
+            className="relative [&>section:first-child>header>div]:gap-28 sm:[&>section:first-child>header>div]:gap-7"
+          >
             <Link
               href={`/brands/${brand.id}/projects`}
-              className="inline-flex items-center justify-center rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-indigo-600/20 transition hover:bg-indigo-500 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-indigo-200"
+              className="absolute left-5 top-[17rem] z-10 inline-flex items-center justify-center rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-indigo-950/30 transition hover:bg-indigo-500 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-indigo-300 sm:left-auto sm:right-8 sm:top-8"
             >
               Video Projects
             </Link>
-          </div>
 
-          <section aria-label="Script Writer workspace">
-      <ScriptWriter brand={brand} />
-      <ScriptLibrary brandId={brand.id} />
+            <ScriptWriter brand={brand} />
+            <ScriptLibrary brandId={brand.id} />
           </section>
 
           <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-[0_20px_60px_-30px_rgba(15,23,42,0.4)]">
