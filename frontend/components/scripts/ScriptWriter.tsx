@@ -23,9 +23,24 @@ import {
 } from "react";
 
 import type { Brand } from "@/types/brand";
+import type { CreatorScript } from "@/types/script";
 
-interface ScriptWriterProps {
+export type ScriptWriterPhase =
+  | "idle"
+  | "generating"
+  | "saving";
+
+export interface ScriptWriterProps {
   brand: Brand;
+  embedded?: boolean;
+  initialTopic?: string;
+  initialKeyPoints?: string;
+  sessionScope?: string;
+  autoSaveAfterGeneration?: boolean;
+  onScriptSaved?: (
+    script: CreatorScript,
+  ) => void | Promise<void>;
+  onPhaseChange?: (phase: ScriptWriterPhase) => void;
 }
 
 interface ScriptFormValues {
@@ -49,6 +64,17 @@ const INITIAL_VALUES: ScriptFormValues = {
   constraints: "",
   includeProductionNotes: false,
 };
+
+function createInitialValues(
+  initialTopic: string | undefined,
+  initialKeyPoints: string | undefined,
+): ScriptFormValues {
+  return {
+    ...INITIAL_VALUES,
+    topic: initialTopic ?? "",
+    keyPoints: initialKeyPoints ?? "",
+  };
+}
 
 const inputClassName =
   "w-full rounded-xl border border-slate-200 bg-slate-50/80 px-3.5 py-3 text-sm text-slate-950 shadow-inner shadow-slate-100 outline-none transition placeholder:text-slate-400 hover:border-slate-300 hover:bg-white focus:border-indigo-500 focus:bg-white focus:ring-4 focus:ring-indigo-100";
@@ -92,11 +118,23 @@ function createSessionId(): string {
     .slice(2)}`;
 }
 
-function getSessionStorageKey(brand: Brand): string {
+function getSessionStorageKey(
+  brand: Brand,
+  embedded: boolean,
+  sessionScope: string | undefined,
+): string {
   const brandScope =
     brand.id.trim() ||
     brand.name.trim() ||
     "unnamed-brand";
+
+  if (embedded || sessionScope?.trim()) {
+    const projectScope = sessionScope?.trim() || "embedded";
+
+    return `creatoros-project-script-writer-session:${encodeURIComponent(
+      brandScope,
+    )}:${encodeURIComponent(projectScope)}`;
+  }
 
   return `creatoros-script-writer-session:${encodeURIComponent(
     brandScope.slice(0, 120)
@@ -123,9 +161,18 @@ async function getResponseError(
 
 export default function ScriptWriter({
   brand,
+  embedded = false,
+  initialTopic,
+  initialKeyPoints,
+  sessionScope,
+  autoSaveAfterGeneration = false,
+  onScriptSaved,
+  onPhaseChange,
 }: ScriptWriterProps) {
   const [formValues, setFormValues] =
-    useState<ScriptFormValues>(INITIAL_VALUES);
+    useState<ScriptFormValues>(() =>
+      createInitialValues(initialTopic, initialKeyPoints),
+    );
   const [lastSubmittedValues, setLastSubmittedValues] =
     useState<ScriptFormValues | null>(null);
   const [sessionId, setSessionId] = useState("");
@@ -138,13 +185,215 @@ export default function ScriptWriter({
   } | null>(null);
   const [error, setError] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
+  const [needsSaveRetry, setNeedsSaveRetry] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const mountedRef = useRef(false);
+  const generationLatchRef = useRef(false);
+  const saveLatchRef = useRef(false);
+  const operationIdRef = useRef(0);
+  const saveOperationIdRef = useRef(0);
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const savedScriptIdRef = useRef<string | null>(null);
+  const copyFeedbackTimer = useRef<number | null>(null);
+  const libraryFeedbackTimer = useRef<number | null>(null);
+  const onScriptSavedRef = useRef(onScriptSaved);
+  const onPhaseChangeRef = useRef(onPhaseChange);
+  const phaseRef = useRef<ScriptWriterPhase>("idle");
+  const normalizedSessionScope = sessionScope?.trim();
+  const sessionStorageKey = getSessionStorageKey(
+    brand,
+    embedded,
+    normalizedSessionScope,
+  );
+  const usesProjectScope =
+    embedded || Boolean(normalizedSessionScope);
+  const projectScopeKey = usesProjectScope
+    ? sessionStorageKey
+    : null;
+  const activeScopeKeyRef = useRef(sessionStorageKey);
+  const previousProjectScopeKeyRef = useRef(projectScopeKey);
+
+  activeScopeKeyRef.current = sessionStorageKey;
+  onScriptSavedRef.current = onScriptSaved;
+  onPhaseChangeRef.current = onPhaseChange;
+
   const saveToLibraryDisabled =
     isGenerating ||
     isSavingToLibrary ||
     !script.trim() ||
     !lastSubmittedValues?.topic.trim();
 
-  const handleSaveToLibrary = async () => {
+  function isActiveScope(scopeKey: string): boolean {
+    return (
+      mountedRef.current &&
+      activeScopeKeyRef.current === scopeKey
+    );
+  }
+
+  function emitPhase(
+    phase: ScriptWriterPhase,
+    scopeKey: string,
+  ) {
+    if (
+      isActiveScope(scopeKey) &&
+      phaseRef.current !== phase
+    ) {
+      phaseRef.current = phase;
+
+      try {
+        onPhaseChangeRef.current?.(phase);
+      } catch {
+        // Consumer phase notifications must not interrupt the workflow.
+      }
+    }
+  }
+
+  function clearLibraryFeedbackTimer() {
+    if (libraryFeedbackTimer.current !== null) {
+      window.clearTimeout(libraryFeedbackTimer.current);
+      libraryFeedbackTimer.current = null;
+    }
+  }
+
+  function scheduleLibraryFeedbackClear(scopeKey: string) {
+    clearLibraryFeedbackTimer();
+
+    libraryFeedbackTimer.current = window.setTimeout(() => {
+      if (!isActiveScope(scopeKey)) {
+        return;
+      }
+
+      setLibrarySaveFeedback((current) =>
+        current?.type === "success" ? null : current,
+      );
+      libraryFeedbackTimer.current = null;
+    }, 2500);
+  }
+
+  async function saveScriptToLibrary(
+    content: string,
+    values: ScriptFormValues,
+    automaticSave: boolean,
+  ): Promise<CreatorScript | null> {
+    if (
+      saveLatchRef.current ||
+      (generationLatchRef.current && !automaticSave)
+    ) {
+      return null;
+    }
+
+    const scriptTopic = values.topic.trim();
+    if (!content.trim() || !scriptTopic) {
+      if (isActiveScope(sessionStorageKey)) {
+        setLibrarySaveFeedback({
+          type: "error",
+          message: "Generate a complete script before saving.",
+        });
+      }
+      return null;
+    }
+
+    const scopeKey = sessionStorageKey;
+    const saveOperationId = ++saveOperationIdRef.current;
+    saveLatchRef.current = true;
+    clearLibraryFeedbackTimer();
+    setIsSavingToLibrary(true);
+    setLibrarySaveFeedback(null);
+    emitPhase("saving", scopeKey);
+
+    try {
+      const existingSavedScriptId = savedScriptIdRef.current;
+      let savedScript: CreatorScript;
+
+      if (existingSavedScriptId) {
+        const updatedScript = await updateCloudScript(
+          existingSavedScriptId,
+          {
+            topic: scriptTopic,
+            content,
+          },
+        );
+
+        if (!updatedScript) {
+          throw new Error("The saved script could not be found.");
+        }
+
+        savedScript = updatedScript;
+      } else {
+        savedScript = await createCloudScript({
+          brandId: brand.id,
+          title: scriptTopic,
+          topic: scriptTopic,
+          content,
+        });
+      }
+
+      if (!isActiveScope(scopeKey)) {
+        return savedScript;
+      }
+
+      savedScriptIdRef.current = savedScript.id;
+      setSavedScriptId(savedScript.id);
+      setNeedsSaveRetry(false);
+      setLibrarySaveFeedback({
+        type: "success",
+        message: existingSavedScriptId
+          ? "Saved script updated."
+          : automaticSave
+            ? "Generated script saved to this brand's Script Library."
+            : "Script saved to your library.",
+      });
+
+      if (!embedded) {
+        scheduleLibraryFeedbackClear(scopeKey);
+      }
+
+      try {
+        await onScriptSavedRef.current?.(savedScript);
+      } catch (callbackError) {
+        if (isActiveScope(scopeKey)) {
+          setLibrarySaveFeedback({
+            type: "error",
+            message:
+              callbackError instanceof Error &&
+              callbackError.message.trim()
+                ? `Script saved to the library, but the next step failed: ${callbackError.message}`
+                : "Script saved to the library, but the next step could not be completed.",
+          });
+        }
+      }
+
+      return savedScript;
+    } catch (saveError) {
+      if (isActiveScope(scopeKey)) {
+        const message =
+          saveError instanceof Error
+            ? saveError.message
+            : "Unable to save this script.";
+
+        setNeedsSaveRetry(automaticSave);
+        setLibrarySaveFeedback({
+          type: "error",
+          message: automaticSave
+            ? `Generated, but not saved. ${message}`
+            : message,
+        });
+      }
+
+      return null;
+    } finally {
+      if (saveOperationIdRef.current === saveOperationId) {
+        saveLatchRef.current = false;
+
+        if (isActiveScope(scopeKey)) {
+          setIsSavingToLibrary(false);
+          emitPhase("idle", scopeKey);
+        }
+      }
+    }
+  }
+
+  async function handleSaveToLibrary() {
     if (saveToLibraryDisabled) {
       setLibrarySaveFeedback({
         type: "error",
@@ -153,69 +402,42 @@ export default function ScriptWriter({
       return;
     }
 
-    const scriptTopic = lastSubmittedValues?.topic.trim() ?? "";
-    if (!scriptTopic) {
-      setLibrarySaveFeedback({
-        type: "error",
-        message: "A topic is required before saving.",
-      });
+    if (!lastSubmittedValues) {
       return;
     }
 
-    setIsSavingToLibrary(true);
-    setLibrarySaveFeedback(null);
-
-    try {
-      if (savedScriptId) {
-        const updatedScript = await updateCloudScript(savedScriptId, {
-          topic: scriptTopic,
-          content: script,
-        });
-        if (!updatedScript) {
-          throw new Error("The saved script could not be found.");
-        }
-
-        setLibrarySaveFeedback({
-          type: "success",
-          message: "Saved script updated.",
-        });
-      } else {
-        const savedScript = await createCloudScript({
-          brandId: brand.id,
-          title: scriptTopic,
-          topic: scriptTopic,
-          content: script,
-        });
-        setSavedScriptId(savedScript.id);
-        setLibrarySaveFeedback({
-          type: "success",
-          message: "Script saved to your library.",
-        });
-      }
-
-      window.setTimeout(() => {
-        setLibrarySaveFeedback((current) =>
-          current?.type === "success" ? null : current,
-        );
-      }, 2500);
-    } catch (error) {
-      setLibrarySaveFeedback({
-        type: "error",
-        message:
-          error instanceof Error
-            ? error.message
-            : "Unable to save this script.",
-      });
-    } finally {
-      setIsSavingToLibrary(false);
-    }
-  };
-  const [copied, setCopied] = useState(false);
-  const copyFeedbackTimer = useRef<number | null>(null);
-
-  const sessionStorageKey = getSessionStorageKey(brand);
+    await saveScriptToLibrary(
+      script,
+      lastSubmittedValues,
+      autoSaveAfterGeneration,
+    );
+  }
 
   useEffect(() => {
+    mountedRef.current = true;
+
+    return () => {
+      mountedRef.current = false;
+      operationIdRef.current += 1;
+      saveOperationIdRef.current += 1;
+      generationLatchRef.current = false;
+      saveLatchRef.current = false;
+      abortControllerRef.current?.abort();
+      abortControllerRef.current = null;
+
+      if (copyFeedbackTimer.current !== null) {
+        window.clearTimeout(copyFeedbackTimer.current);
+      }
+
+      if (libraryFeedbackTimer.current !== null) {
+        window.clearTimeout(libraryFeedbackTimer.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    let nextSessionId: string;
+
     try {
       const existingSession =
         localStorage.getItem(sessionStorageKey)?.trim();
@@ -224,29 +446,85 @@ export default function ScriptWriter({
         existingSession &&
         existingSession.length <= 200
       ) {
-        setSessionId(existingSession);
-        return;
+        nextSessionId = existingSession;
+      } else {
+        nextSessionId = createSessionId();
+        localStorage.setItem(
+          sessionStorageKey,
+          nextSessionId,
+        );
       }
-
-      const newSessionId = createSessionId();
-
-      localStorage.setItem(
-        sessionStorageKey,
-        newSessionId
-      );
-      setSessionId(newSessionId);
     } catch {
-      setSessionId(createSessionId());
+      nextSessionId = createSessionId();
     }
+
+    const sessionTimer = window.setTimeout(() => {
+      if (activeScopeKeyRef.current === sessionStorageKey) {
+        setSessionId(nextSessionId);
+      }
+    }, 0);
+
+    return () => window.clearTimeout(sessionTimer);
   }, [sessionStorageKey]);
 
   useEffect(() => {
-    return () => {
-      if (copyFeedbackTimer.current !== null) {
-        window.clearTimeout(copyFeedbackTimer.current);
+    if (
+      !projectScopeKey ||
+      previousProjectScopeKeyRef.current === projectScopeKey
+    ) {
+      previousProjectScopeKeyRef.current = projectScopeKey;
+      return;
+    }
+
+    previousProjectScopeKeyRef.current = projectScopeKey;
+    operationIdRef.current += 1;
+    saveOperationIdRef.current += 1;
+    generationLatchRef.current = false;
+    saveLatchRef.current = false;
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = null;
+    clearLibraryFeedbackTimer();
+
+    if (copyFeedbackTimer.current !== null) {
+      window.clearTimeout(copyFeedbackTimer.current);
+      copyFeedbackTimer.current = null;
+    }
+
+    savedScriptIdRef.current = null;
+    const resetTimer = window.setTimeout(() => {
+      if (!isActiveScope(projectScopeKey)) {
+        return;
       }
-    };
-  }, []);
+
+      setFormValues(
+        createInitialValues(initialTopic, initialKeyPoints),
+      );
+      setLastSubmittedValues(null);
+      setScript("");
+      setSavedScriptId(null);
+      setIsSavingToLibrary(false);
+      setLibrarySaveFeedback(null);
+      setNeedsSaveRetry(false);
+      setError("");
+      setIsGenerating(false);
+      setCopied(false);
+      if (phaseRef.current !== "idle") {
+        phaseRef.current = "idle";
+
+        try {
+          onPhaseChangeRef.current?.("idle");
+        } catch {
+          // Consumer phase notifications are best-effort.
+        }
+      }
+    }, 0);
+
+    return () => window.clearTimeout(resetTimer);
+  }, [
+    initialKeyPoints,
+    initialTopic,
+    projectScopeKey,
+  ]);
 
   function updateField(
     field: keyof ScriptFormValues,
@@ -259,24 +537,42 @@ export default function ScriptWriter({
   }
 
   async function generateScript(
-    values: ScriptFormValues
+    values: ScriptFormValues,
+    resetSavedScript: boolean,
   ) {
     if (
-      isGenerating ||
+      generationLatchRef.current ||
+      saveLatchRef.current ||
       !sessionId ||
       !values.topic.trim()
     ) {
       return;
     }
 
+    const scopeKey = sessionStorageKey;
+    const operationId = ++operationIdRef.current;
+    const abortController = new AbortController();
     const submittedValues = {
       ...values,
     };
+
+    generationLatchRef.current = true;
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = abortController;
+    clearLibraryFeedbackTimer();
+
+    if (resetSavedScript) {
+      savedScriptIdRef.current = null;
+      setSavedScriptId(null);
+    }
 
     setIsGenerating(true);
     setError("");
     setCopied(false);
     setScript("");
+    setNeedsSaveRetry(false);
+    setLibrarySaveFeedback(null);
+    emitPhase("generating", scopeKey);
 
     try {
       const response = await fetch("/api/scripts", {
@@ -297,7 +593,12 @@ export default function ScriptWriter({
           includeProductionNotes:
             submittedValues.includeProductionNotes,
         }),
+        signal: abortController.signal,
       });
+
+      if (!isActiveScope(scopeKey)) {
+        return;
+      }
 
       if (!response.ok) {
         throw new Error(await getResponseError(response));
@@ -323,10 +624,20 @@ export default function ScriptWriter({
         generatedScript += decoder.decode(value, {
           stream: true,
         });
+
+        if (!isActiveScope(scopeKey)) {
+          await reader.cancel();
+          return;
+        }
+
         setScript(generatedScript);
       }
 
       generatedScript += decoder.decode();
+
+      if (!isActiveScope(scopeKey)) {
+        return;
+      }
 
       if (!generatedScript.trim()) {
         throw new Error(
@@ -336,14 +647,39 @@ export default function ScriptWriter({
 
       setScript(generatedScript);
       setLastSubmittedValues(submittedValues);
+
+      if (autoSaveAfterGeneration) {
+        setIsGenerating(false);
+        await saveScriptToLibrary(
+          generatedScript,
+          submittedValues,
+          true,
+        );
+      }
     } catch (generationError) {
-      setError(
-        generationError instanceof Error
-          ? generationError.message
-          : "Script generation failed. Please try again."
-      );
+      if (
+        !abortController.signal.aborted &&
+        isActiveScope(scopeKey)
+      ) {
+        setError(
+          generationError instanceof Error
+            ? generationError.message
+            : "Script generation failed. Please try again.",
+        );
+      }
     } finally {
-      setIsGenerating(false);
+      if (operationIdRef.current === operationId) {
+        generationLatchRef.current = false;
+        abortControllerRef.current = null;
+
+        if (isActiveScope(scopeKey)) {
+          setIsGenerating(false);
+
+          if (!saveLatchRef.current) {
+            emitPhase("idle", scopeKey);
+          }
+        }
+      }
     }
   }
 
@@ -353,14 +689,12 @@ export default function ScriptWriter({
   }
 
   function startNewGeneration() {
-    setSavedScriptId(null);
-    setLibrarySaveFeedback(null);
-    void generateScript(formValues);
+    void generateScript(formValues, true);
   }
 
   function handleRegenerate() {
     if (lastSubmittedValues) {
-      void generateScript(lastSubmittedValues);
+      void generateScript(lastSubmittedValues, false);
     }
   }
 
@@ -369,8 +703,15 @@ export default function ScriptWriter({
       return;
     }
 
+    const scopeKey = sessionStorageKey;
+
     try {
       await navigator.clipboard.writeText(script);
+
+      if (!isActiveScope(scopeKey)) {
+        return;
+      }
+
       setCopied(true);
 
       if (copyFeedbackTimer.current !== null) {
@@ -378,20 +719,27 @@ export default function ScriptWriter({
       }
 
       copyFeedbackTimer.current = window.setTimeout(
-        () => setCopied(false),
-        2000
+        () => {
+          if (isActiveScope(scopeKey)) {
+            setCopied(false);
+          }
+        },
+        2000,
       );
     } catch {
-      setError(
-        "The script could not be copied. Please copy it manually."
-      );
+      if (isActiveScope(scopeKey)) {
+        setError(
+          "The script could not be copied. Please copy it manually.",
+        );
+      }
     }
   }
 
   const submitDisabled =
     !formValues.topic.trim() ||
     !sessionId ||
-    isGenerating;
+    isGenerating ||
+    (autoSaveAfterGeneration && isSavingToLibrary);
 
   function handleFormKeyDown(
     event: KeyboardEvent<HTMLFormElement>
@@ -413,46 +761,79 @@ export default function ScriptWriter({
 
   return (
     <section className="space-y-6">
-      <header className="overflow-hidden rounded-[28px] bg-[linear-gradient(115deg,#0f172a_0%,#1e1b4b_100%)] px-5 py-7 text-white shadow-[0_24px_70px_-28px_rgba(15,23,42,0.85)] sm:px-8 sm:py-9 lg:px-10">
-        <div className="flex flex-col gap-7 lg:flex-row lg:items-end lg:justify-between">
-          <div className="max-w-3xl">
+      {embedded ? (
+        <header className="rounded-2xl border border-violet-200 bg-violet-50/70 px-5 py-4 sm:px-6">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex items-center gap-3">
-              <span className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-500 text-white shadow-lg shadow-indigo-950/30">
+              <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-violet-600 text-white shadow-lg shadow-violet-600/20">
                 <WandSparkles
                   className="h-5 w-5"
                   aria-hidden="true"
                 />
               </span>
-              <p className="text-xs font-bold uppercase tracking-[0.24em] text-indigo-200">
-                Creator Studio
+              <div>
+                <p className="text-xs font-bold uppercase tracking-[0.18em] text-violet-600">
+                  AI script creation
+                </p>
+                <h2 className="mt-1 text-lg font-bold text-slate-950">
+                  Create a brand-aware script
+                </h2>
+              </div>
+            </div>
+            <span className="w-fit rounded-full border border-violet-200 bg-white px-3 py-1.5 text-xs font-semibold text-violet-700">
+              {autoSaveAfterGeneration
+                ? `Automatically saves to ${brand.name}'s Script Library`
+                : `Save drafts to ${brand.name}'s Script Library`}
+            </span>
+          </div>
+        </header>
+      ) : (
+        <header className="overflow-hidden rounded-[28px] bg-[linear-gradient(115deg,#0f172a_0%,#1e1b4b_100%)] px-5 py-7 text-white shadow-[0_24px_70px_-28px_rgba(15,23,42,0.85)] sm:px-8 sm:py-9 lg:px-10">
+          <div className="flex flex-col gap-7 lg:flex-row lg:items-end lg:justify-between">
+            <div className="max-w-3xl">
+              <div className="flex items-center gap-3">
+                <span className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-500 text-white shadow-lg shadow-indigo-950/30">
+                  <WandSparkles
+                    className="h-5 w-5"
+                    aria-hidden="true"
+                  />
+                </span>
+                <p className="text-xs font-bold uppercase tracking-[0.24em] text-indigo-200">
+                  Creator Studio
+                </p>
+              </div>
+              <h1 className="mt-5 text-3xl font-bold tracking-tight sm:text-4xl lg:text-5xl">
+                AI Script Writer
+              </h1>
+              <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-300 sm:text-base sm:leading-7">
+                Shape an idea into a polished, brand-aware YouTube
+                script with a focused creative brief.
               </p>
             </div>
-            <h1 className="mt-5 text-3xl font-bold tracking-tight sm:text-4xl lg:text-5xl">
-              AI Script Writer
-            </h1>
-            <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-300 sm:text-base sm:leading-7">
-              Shape an idea into a polished, brand-aware YouTube
-              script with a focused creative brief.
-            </p>
-          </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="max-w-full truncate rounded-full border border-white/15 bg-white/10 px-4 py-2 text-xs font-semibold text-white backdrop-blur-sm">
-              {brand.name}
-            </span>
-            <span className="inline-flex items-center gap-2 rounded-full border border-indigo-300/30 bg-indigo-400/15 px-4 py-2 text-xs font-semibold text-indigo-100 backdrop-blur-sm">
-              <Sparkles className="h-3.5 w-3.5" aria-hidden="true" />
-              Brand-aware
-            </span>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="max-w-full truncate rounded-full border border-white/15 bg-white/10 px-4 py-2 text-xs font-semibold text-white backdrop-blur-sm">
+                {brand.name}
+              </span>
+              <span className="inline-flex items-center gap-2 rounded-full border border-indigo-300/30 bg-indigo-400/15 px-4 py-2 text-xs font-semibold text-indigo-100 backdrop-blur-sm">
+                <Sparkles
+                  className="h-3.5 w-3.5"
+                  aria-hidden="true"
+                />
+                Brand-aware
+              </span>
+            </div>
           </div>
-        </div>
-      </header>
+        </header>
+      )}
 
       <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-[400px_minmax(0,1fr)] xl:gap-8">
         <form
           onSubmit={handleSubmit}
           onKeyDown={handleFormKeyDown}
-          className="space-y-6 rounded-3xl border border-slate-200 bg-white p-5 shadow-[0_20px_50px_-24px_rgba(15,23,42,0.35)] sm:p-6 lg:sticky lg:top-6"
+          className={`space-y-6 rounded-3xl border border-slate-200 bg-white p-5 shadow-[0_20px_50px_-24px_rgba(15,23,42,0.35)] sm:p-6 ${
+            embedded ? "" : "lg:sticky lg:top-6"
+          }`}
           aria-busy={isGenerating}
         >
           <div className="flex items-start justify-between gap-4 border-b border-slate-100 pb-5">
@@ -674,7 +1055,8 @@ export default function ScriptWriter({
               disabled={submitDisabled}
               className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-5 py-4 text-sm font-bold text-white shadow-lg shadow-indigo-600/25 transition hover:from-indigo-700 hover:to-violet-700 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-indigo-200 disabled:cursor-not-allowed disabled:from-slate-300 disabled:to-slate-300 disabled:shadow-none"
             >
-              {isGenerating ? (
+              {isGenerating ||
+              (autoSaveAfterGeneration && isSavingToLibrary) ? (
                 <Loader2
                   className="h-5 w-5 animate-spin"
                   aria-hidden="true"
@@ -687,7 +1069,9 @@ export default function ScriptWriter({
               )}
               {isGenerating
                 ? "Creating your script…"
-                : "Generate Script"}
+                : autoSaveAfterGeneration && isSavingToLibrary
+                  ? "Saving to library…"
+                  : "Generate Script"}
             </button>
             <div className="mt-3 flex items-center justify-center gap-2 text-xs text-slate-500">
               <span>Quick generate</span>
@@ -713,13 +1097,16 @@ export default function ScriptWriter({
                   role="status"
                   aria-live="polite"
                 >
-                  {isGenerating ? (
+                  {isGenerating ||
+                  (embedded && isSavingToLibrary) ? (
                     <>
                       <Loader2
                         className="h-3.5 w-3.5 animate-spin text-indigo-300"
                         aria-hidden="true"
                       />
-                      Generating
+                      {isGenerating
+                        ? "Generating"
+                        : "Saving to library"}
                     </>
                   ) : script ? (
                     <>
@@ -745,7 +1132,7 @@ export default function ScriptWriter({
             <div className="flex flex-wrap gap-2">
             <button
               type="button"
-              onClick={handleSaveToLibrary}
+              onClick={() => void handleSaveToLibrary()}
               disabled={saveToLibraryDisabled}
               className="rounded-lg bg-violet-600 px-3 py-2 text-sm font-semibold text-white transition hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-50"
             >
@@ -753,7 +1140,9 @@ export default function ScriptWriter({
                 ? "Saving…"
                 : savedScriptId
                   ? "Update Saved Script"
-                  : "Save to Library"}
+                  : needsSaveRetry
+                    ? "Retry Save"
+                    : "Save to Library"}
             </button>
             {librarySaveFeedback && (
               <span
@@ -762,7 +1151,12 @@ export default function ScriptWriter({
                     ? "text-sm font-medium text-emerald-600 dark:text-emerald-400"
                     : "text-sm font-medium text-rose-600 dark:text-rose-400"
                 }
-                role="status"
+                role={
+                  embedded &&
+                  librarySaveFeedback.type === "error"
+                    ? "alert"
+                    : "status"
+                }
               >
                 {librarySaveFeedback.message}
               </span>
@@ -776,7 +1170,8 @@ export default function ScriptWriter({
                 disabled={
                   !lastSubmittedValues ||
                   !sessionId ||
-                  isGenerating
+                  isGenerating ||
+                  (autoSaveAfterGeneration && isSavingToLibrary)
                 }
                 className="inline-flex items-center gap-1.5 rounded-lg border border-white/15 bg-white/10 px-3 py-2 text-xs font-bold text-white transition hover:bg-white/15 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-white/20 disabled:cursor-not-allowed disabled:opacity-40"
               >
@@ -825,16 +1220,29 @@ export default function ScriptWriter({
           >
             {script ? (
               <article className="mx-auto min-h-[760px] max-w-[880px] rounded-sm border border-slate-200 bg-white px-6 py-10 shadow-[0_12px_40px_-22px_rgba(15,23,42,0.45)] sm:px-10 sm:py-12 lg:px-14">
-                <div className="select-text whitespace-pre-wrap break-words font-serif text-[15px] leading-8">
-                  {script.split("\n").map((line, index) => (
-                    <div
-                      key={index}
-                      className={getScriptLineClassName(line)}
-                    >
-                      {line || "\u00A0"}
-                    </div>
-                  ))}
-                </div>
+                {embedded ? (
+                  <textarea
+                    aria-label="Generated script content"
+                    value={script}
+                    disabled={isGenerating || isSavingToLibrary}
+                    onChange={(event) => {
+                      setScript(event.target.value);
+                      setLibrarySaveFeedback(null);
+                    }}
+                    className="min-h-[660px] w-full resize-y border-0 bg-transparent font-serif text-[15px] leading-8 text-slate-800 outline-none disabled:cursor-wait disabled:opacity-80"
+                  />
+                ) : (
+                  <div className="select-text whitespace-pre-wrap break-words font-serif text-[15px] leading-8">
+                    {script.split("\n").map((line, index) => (
+                      <div
+                        key={index}
+                        className={getScriptLineClassName(line)}
+                      >
+                        {line || "\u00A0"}
+                      </div>
+                    ))}
+                  </div>
+                )}
                 {isGenerating && (
                   <span className="mt-5 inline-flex items-center gap-2 rounded-full bg-indigo-50 px-3 py-1.5 text-xs font-bold text-indigo-700">
                     <Loader2
