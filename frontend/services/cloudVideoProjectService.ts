@@ -85,6 +85,35 @@ function normalizeOptionalId(
   return normalizedValue || null;
 }
 
+function buildVideoProjectUpdateRow(
+  updates: UpdateVideoProjectInput,
+): VideoProjectUpdateRow {
+  const updateRow: VideoProjectUpdateRow = {
+    updated_at: new Date().toISOString(),
+  };
+
+  if (updates.scriptId !== undefined) {
+    updateRow.script_id = normalizeOptionalId(updates.scriptId);
+  }
+
+  if (updates.title !== undefined) {
+    updateRow.title = normalizeRequiredText(
+      updates.title,
+      "title",
+    );
+  }
+
+  if (updates.topic !== undefined) {
+    updateRow.topic = normalizeOptionalText(updates.topic);
+  }
+
+  if (updates.status !== undefined) {
+    updateRow.status = updates.status;
+  }
+
+  return updateRow;
+}
+
 export async function getCloudVideoProjectsByBrand(
   brandId: string,
 ): Promise<CreatorVideoProject[]> {
@@ -177,35 +206,53 @@ export async function updateCloudVideoProject(
   const supabase = createClient();
   const user = await requireAuthenticatedUser(supabase);
   const normalizedId = normalizeRequiredText(id, "id");
-
-  const updateRow: VideoProjectUpdateRow = {
-    updated_at: new Date().toISOString(),
-  };
-
-  if (updates.scriptId !== undefined) {
-    updateRow.script_id = normalizeOptionalId(updates.scriptId);
-  }
-
-  if (updates.title !== undefined) {
-    updateRow.title = normalizeRequiredText(
-      updates.title,
-      "title",
-    );
-  }
-
-  if (updates.topic !== undefined) {
-    updateRow.topic = normalizeOptionalText(updates.topic);
-  }
-
-  if (updates.status !== undefined) {
-    updateRow.status = updates.status;
-  }
+  const updateRow = buildVideoProjectUpdateRow(updates);
 
   const { data, error } = await supabase
     .from("video_projects")
     .update(updateRow)
     .eq("user_id", user.id)
     .eq("id", normalizedId)
+    .select("*")
+    .maybeSingle();
+
+  if (error) {
+    throw error;
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  dispatchProjectsChanged();
+  return mapVideoProjectRowToProject(data as VideoProjectRow);
+}
+
+export async function updateCloudVideoProjectIfUnchanged(
+  id: string,
+  brandId: string,
+  expectedUpdatedAt: string,
+  updates: UpdateVideoProjectInput,
+): Promise<CreatorVideoProject | null> {
+  const supabase = createClient();
+  await requireAuthenticatedUser(supabase);
+  const normalizedId = normalizeRequiredText(id, "id");
+  const normalizedBrandId = normalizeRequiredText(
+    brandId,
+    "brandId",
+  );
+  const normalizedExpectedUpdatedAt = normalizeRequiredText(
+    expectedUpdatedAt,
+    "expectedUpdatedAt",
+  );
+  const updateRow = buildVideoProjectUpdateRow(updates);
+
+  const { data, error } = await supabase
+    .from("video_projects")
+    .update(updateRow)
+    .eq("id", normalizedId)
+    .eq("brand_id", normalizedBrandId)
+    .eq("updated_at", normalizedExpectedUpdatedAt)
     .select("*")
     .maybeSingle();
 
