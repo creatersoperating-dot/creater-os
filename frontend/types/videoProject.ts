@@ -14,6 +14,7 @@ export interface CreatorVideoProject {
   id: string;
   brandId: string;
   scriptId: string | null;
+  audioGenerationId: string | null;
   title: string;
   topic: string;
   status: VideoProjectStatus;
