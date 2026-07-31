@@ -7,7 +7,7 @@ interface BrandCardProps {
 
 export default function BrandCard({ brand }: BrandCardProps) {
   return (
-    <Link href={`/brands/${brand.id}`}>
+    <Link href={`/brands/${brand.id}/projects`}>
       <div className="bg-white rounded-xl shadow p-6 hover:shadow-xl hover:scale-[1.02] transition-all duration-200 cursor-pointer">
 
         <h2 className="text-2xl font-bold">

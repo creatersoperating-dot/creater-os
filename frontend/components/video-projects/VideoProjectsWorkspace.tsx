@@ -7,6 +7,7 @@ import {
   Plus,
 } from "lucide-react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   useEffect,
   useRef,
@@ -90,6 +91,7 @@ function VideoProjectsWorkspaceContent({
   brandId,
   brandName,
 }: VideoProjectsWorkspaceProps) {
+  const router = useRouter();
   const [projects, setProjects] = useState<CreatorVideoProject[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isCreating, setIsCreating] = useState(false);
@@ -221,59 +223,45 @@ function VideoProjectsWorkspaceContent({
     }
 
     const expectedBrandId = brandId;
-    let projectWasCreated = false;
+    let isNavigating = false;
     isCreatingRef.current = true;
     setIsCreating(true);
     setFeedback(null);
 
     try {
-      await createCloudVideoProject({
+      const createdProject = await createCloudVideoProject({
         brandId: expectedBrandId,
         scriptId: null,
         title: normalizedTitle,
         topic: normalizedTopic,
         status: "idea",
       });
-      projectWasCreated = true;
 
-      if (canUpdate(expectedBrandId)) {
-        setTitle("");
-        setTopic("");
+      if (!canUpdate(expectedBrandId)) {
+        return;
       }
 
-      const requestId = ++requestIdRef.current;
-      const refreshedProjects =
-        await getCloudVideoProjectsByBrand(expectedBrandId);
-
-      if (
-        canUpdate(expectedBrandId) &&
-        requestId === requestIdRef.current
-      ) {
-        setProjects(refreshedProjects);
-        setInitialLoadError(null);
-        setIsLoading(false);
-        setFeedback({
-          type: "success",
-          message: "Video project created.",
-        });
-      }
+      router.push(
+        `/brands/${expectedBrandId}/projects/${createdProject.id}`,
+      );
+      isNavigating = true;
     } catch (error) {
       if (canUpdate(expectedBrandId)) {
         setFeedback({
           type: "error",
-          message: projectWasCreated
-            ? "The project was created, but the list could not be refreshed. Please reload the page."
-            : getErrorMessage(
-                error,
-                "Unable to create this video project.",
-              ),
+          message: getErrorMessage(
+            error,
+            "Unable to create this video project.",
+          ),
         });
       }
     } finally {
-      isCreatingRef.current = false;
+      if (!isNavigating) {
+        isCreatingRef.current = false;
 
-      if (canUpdate(expectedBrandId)) {
-        setIsCreating(false);
+        if (canUpdate(expectedBrandId)) {
+          setIsCreating(false);
+        }
       }
     }
   }
@@ -285,11 +273,11 @@ function VideoProjectsWorkspaceContent({
           <div className="flex flex-col gap-7 lg:flex-row lg:items-end lg:justify-between">
             <div className="max-w-3xl">
               <Link
-                href={`/brands/${brandId}`}
+                href="/brands"
                 className="inline-flex items-center gap-2 text-sm font-semibold text-indigo-200 transition hover:text-white"
               >
                 <ArrowLeft className="h-4 w-4" aria-hidden="true" />
-                Back to Script Writer
+                Back to Brands
               </Link>
 
               <div className="mt-6 flex items-center gap-3">

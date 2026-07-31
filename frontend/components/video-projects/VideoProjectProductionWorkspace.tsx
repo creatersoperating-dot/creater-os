@@ -10,6 +10,7 @@ import {
   Mic,
   Save,
   Send,
+  Sparkles,
 } from "lucide-react";
 import Link from "next/link";
 import {
@@ -20,12 +21,20 @@ import {
 } from "react";
 
 import { getCloudScriptsByBrand } from "@/services/cloudScriptService";
-import { updateCloudVideoProject } from "@/services/cloudVideoProjectService";
+import ScriptWriter, {
+  type ScriptWriterPhase,
+} from "@/components/scripts/ScriptWriter";
+import {
+  getCloudVideoProjectById,
+  updateCloudVideoProject,
+  updateCloudVideoProjectIfUnchanged,
+} from "@/services/cloudVideoProjectService";
 import type { Brand } from "@/types/brand";
 import type { CreatorScript } from "@/types/script";
 import {
   VIDEO_PROJECT_STATUSES,
   type CreatorVideoProject,
+  type UpdateVideoProjectInput,
   type VideoProjectStatus,
 } from "@/types/videoProject";
 
@@ -39,6 +48,16 @@ interface VideoProjectProductionWorkspaceProps {
 interface Feedback {
   type: "success" | "error";
   message: string;
+}
+
+type ScriptStageMode = "choose" | "ai" | "existing";
+
+interface AiGenerationOperation {
+  token: number;
+  projectId: string;
+  brandId: string;
+  expectedUpdatedAt: string;
+  status: VideoProjectStatus;
 }
 
 function formatStatus(status: VideoProjectStatus): string {
@@ -112,13 +131,36 @@ function VideoProjectProductionWorkspaceContent({
   const [isSavingDetails, setIsSavingDetails] = useState(false);
   const [isChangingStatus, setIsChangingStatus] = useState(false);
   const [isSavingScript, setIsSavingScript] = useState(false);
+  const [scriptStageMode, setScriptStageMode] =
+    useState<ScriptStageMode>("choose");
+  const [hasOpenedAiWriter, setHasOpenedAiWriter] =
+    useState(false);
+  const [scriptWriterPhase, setScriptWriterPhase] =
+    useState<ScriptWriterPhase>("idle");
+  const [isAttachingGeneratedScript, setIsAttachingGeneratedScript] =
+    useState(false);
   const mountedRef = useRef(false);
+  const projectRef = useRef(initialProject);
+  const aiOperationCounterRef = useRef(0);
+  const aiOperationRef = useRef<AiGenerationOperation | null>(null);
+  const aiBusyRef = useRef(false);
+  const generatedAttachmentLatchRef = useRef(false);
+  const generatedAttachmentTokenRef = useRef<number | null>(null);
+  const confirmedReplacementScriptIdRef = useRef<string | null>(null);
+  const generatedScriptsRef = useRef<CreatorScript[]>([]);
+  const scriptWriterPhaseRef =
+    useRef<ScriptWriterPhase>("idle");
 
   useEffect(() => {
     mountedRef.current = true;
 
     return () => {
       mountedRef.current = false;
+      aiOperationCounterRef.current += 1;
+      aiOperationRef.current = null;
+      aiBusyRef.current = false;
+      generatedAttachmentLatchRef.current = false;
+      generatedAttachmentTokenRef.current = null;
     };
   }, []);
 
@@ -134,7 +176,16 @@ function VideoProjectProductionWorkspaceContent({
           return;
         }
 
-        setScripts(brandScripts);
+        setScripts([
+          ...generatedScriptsRef.current,
+          ...brandScripts.filter(
+            (brandScript) =>
+              !generatedScriptsRef.current.some(
+                (generatedScript) =>
+                  generatedScript.id === brandScript.id,
+              ),
+          ),
+        ]);
         setScriptLoadError(null);
       } catch (error) {
         if (isActive) {
@@ -159,6 +210,15 @@ function VideoProjectProductionWorkspaceContent({
     };
   }, [brandId]);
 
+  const hasProjectTopic = project.topic.trim().length > 0;
+  const aiInitialTopic =
+    hasProjectTopic && project.topic.length <= 300
+      ? project.topic
+      : project.title;
+  const aiInitialKeyPoints =
+    hasProjectTopic && project.topic.length > 300
+      ? project.topic
+      : undefined;
   const hasDetailChanges =
     title !== project.title || topic !== project.topic;
   const currentStatusIndex = VIDEO_PROJECT_STATUSES.indexOf(
@@ -177,26 +237,271 @@ function VideoProjectProductionWorkspaceContent({
   const selectedScript =
     scripts.find((script) => script.id === selectedScriptId) ?? null;
   const previewScript = selectedScript ?? attachedScript;
+  const isAiBusy =
+    scriptWriterPhase !== "idle" || isAttachingGeneratedScript;
+  const isMutating =
+    isSavingDetails ||
+    isChangingStatus ||
+    isSavingScript ||
+    isAiBusy;
   const isAttachDisabled =
     !selectedScript ||
     selectedScript.id === project.scriptId ||
     isLoadingScripts ||
-    isSavingScript;
+    isMutating;
   const isDetachDisabled =
     project.scriptId === null ||
     isLoadingScripts ||
-    isSavingScript;
-  const isMutating =
-    isSavingDetails || isChangingStatus || isSavingScript;
+    isMutating;
 
   function applyUpdatedProject(
     updatedProject: CreatorVideoProject,
     syncScriptSelection = false,
   ) {
+    projectRef.current = updatedProject;
     setProject(updatedProject);
 
     if (syncScriptSelection) {
       setSelectedScriptId(updatedProject.scriptId ?? "");
+    }
+  }
+
+  function upsertScript(savedScript: CreatorScript) {
+    generatedScriptsRef.current = [
+      savedScript,
+      ...generatedScriptsRef.current.filter(
+        (scriptItem) => scriptItem.id !== savedScript.id,
+      ),
+    ];
+    setScripts((currentScripts) => [
+      savedScript,
+      ...currentScripts.filter(
+        (scriptItem) => scriptItem.id !== savedScript.id,
+      ),
+    ]);
+  }
+
+  function handleChooseAiScript() {
+    if (isMutating || aiBusyRef.current) {
+      return;
+    }
+
+    const attachedScriptId = projectRef.current.scriptId;
+
+    if (
+      attachedScriptId &&
+      confirmedReplacementScriptIdRef.current !== attachedScriptId
+    ) {
+      const confirmed = window.confirm(
+        "This project already has an attached script. Creating a new AI script may replace that attachment after saving. The current script will remain in the Script Library. Continue?",
+      );
+
+      if (!confirmed) {
+        return;
+      }
+
+      confirmedReplacementScriptIdRef.current = attachedScriptId;
+    }
+
+    setHasOpenedAiWriter(true);
+    setScriptStageMode("ai");
+    setFeedback(null);
+  }
+
+  function handleScriptWriterPhaseChange(
+    phase: ScriptWriterPhase,
+  ) {
+    if (!mountedRef.current) {
+      return;
+    }
+
+    scriptWriterPhaseRef.current = phase;
+    setScriptWriterPhase(phase);
+
+    if (phase === "generating") {
+      const currentProject = projectRef.current;
+      const token = ++aiOperationCounterRef.current;
+
+      aiOperationRef.current = {
+        token,
+        projectId: currentProject.id,
+        brandId,
+        expectedUpdatedAt: currentProject.updatedAt,
+        status: currentProject.status,
+      };
+      aiBusyRef.current = true;
+      setFeedback(null);
+      return;
+    }
+
+    if (phase === "saving") {
+      aiBusyRef.current = true;
+      return;
+    }
+
+    if (!generatedAttachmentLatchRef.current) {
+      aiBusyRef.current = false;
+    }
+  }
+
+  function isCurrentAiOperation(
+    operation: AiGenerationOperation,
+  ): boolean {
+    return (
+      mountedRef.current &&
+      aiOperationRef.current?.token === operation.token &&
+      operation.projectId === projectRef.current.id &&
+      operation.brandId === brandId
+    );
+  }
+
+  async function handleAiScriptSaved(
+    savedScript: CreatorScript,
+  ) {
+    if (!mountedRef.current) {
+      return;
+    }
+
+    if (savedScript.brandId !== brandId) {
+      aiOperationRef.current = null;
+      confirmedReplacementScriptIdRef.current = null;
+      setScriptStageMode("existing");
+      setFeedback({
+        type: "error",
+        message:
+          "The generated script was saved, but it does not belong to this brand and was not attached.",
+      });
+      return;
+    }
+
+    upsertScript(savedScript);
+    setSelectedScriptId(savedScript.id);
+
+    if (projectRef.current.scriptId === savedScript.id) {
+      aiOperationRef.current = null;
+      setFeedback({
+        type: "success",
+        message:
+          "Script changes saved to the Script Library and remain attached to this project.",
+      });
+      return;
+    }
+
+    const operation = aiOperationRef.current;
+
+    if (!operation || !isCurrentAiOperation(operation)) {
+      aiOperationRef.current = null;
+      confirmedReplacementScriptIdRef.current = null;
+      setScriptStageMode("existing");
+      setFeedback({
+        type: "error",
+        message:
+          "The script was saved to the Script Library but was not attached because the generation context changed. You can attach it manually.",
+      });
+      return;
+    }
+
+    if (generatedAttachmentLatchRef.current) {
+      return;
+    }
+
+    const updates: UpdateVideoProjectInput = {
+      scriptId: savedScript.id,
+    };
+
+    if (operation.status === "idea") {
+      updates.status = "script";
+    }
+
+    generatedAttachmentLatchRef.current = true;
+    generatedAttachmentTokenRef.current = operation.token;
+    aiBusyRef.current = true;
+    setIsAttachingGeneratedScript(true);
+
+    try {
+      const updatedProject =
+        await updateCloudVideoProjectIfUnchanged(
+          operation.projectId,
+          operation.brandId,
+          operation.expectedUpdatedAt,
+          updates,
+        );
+
+      if (!isCurrentAiOperation(operation)) {
+        return;
+      }
+
+      if (updatedProject) {
+        applyUpdatedProject(updatedProject, true);
+        aiOperationRef.current = null;
+        confirmedReplacementScriptIdRef.current = null;
+        setScriptStageMode("choose");
+        setFeedback({
+          type: "success",
+          message:
+            operation.status === "idea"
+              ? "Script saved, attached, and project advanced to Script."
+              : "Script saved to the library and attached to this project.",
+        });
+        return;
+      }
+
+      const latestProject = await getCloudVideoProjectById(
+        operation.projectId,
+      );
+
+      if (!isCurrentAiOperation(operation)) {
+        return;
+      }
+
+      if (
+        latestProject &&
+        latestProject.id === operation.projectId &&
+        latestProject.brandId === operation.brandId
+      ) {
+        applyUpdatedProject(latestProject);
+        setTitle(latestProject.title);
+        setTopic(latestProject.topic);
+      }
+
+      aiOperationRef.current = null;
+      confirmedReplacementScriptIdRef.current = null;
+      setSelectedScriptId(savedScript.id);
+      setScriptStageMode("existing");
+      setFeedback({
+        type: "error",
+        message:
+          "The script was saved to the Script Library but was not attached because the project changed. You can attach it manually.",
+      });
+    } catch (error) {
+      if (isCurrentAiOperation(operation)) {
+        aiOperationRef.current = null;
+        confirmedReplacementScriptIdRef.current = null;
+        setSelectedScriptId(savedScript.id);
+        setScriptStageMode("existing");
+        setFeedback({
+          type: "error",
+          message: `The script was saved to the Script Library but could not be attached. ${getErrorMessage(
+            error,
+            "Please attach it manually.",
+          )}`,
+        });
+      }
+    } finally {
+      if (
+        generatedAttachmentTokenRef.current === operation.token
+      ) {
+        generatedAttachmentLatchRef.current = false;
+        generatedAttachmentTokenRef.current = null;
+
+        if (mountedRef.current) {
+          setIsAttachingGeneratedScript(false);
+
+          if (scriptWriterPhaseRef.current === "idle") {
+            aiBusyRef.current = false;
+          }
+        }
+      }
     }
   }
 
@@ -205,7 +510,7 @@ function VideoProjectProductionWorkspaceContent({
   ) {
     event.preventDefault();
 
-    if (isMutating) {
+    if (isMutating || aiBusyRef.current) {
       return;
     }
 
@@ -267,7 +572,7 @@ function VideoProjectProductionWorkspaceContent({
   async function handleStatusChange(
     targetStatus: VideoProjectStatus,
   ) {
-    if (isMutating) {
+    if (isMutating || aiBusyRef.current) {
       return;
     }
 
@@ -330,7 +635,7 @@ function VideoProjectProductionWorkspaceContent({
   }
 
   async function handleAttachScript() {
-    if (isAttachDisabled) {
+    if (isAttachDisabled || aiBusyRef.current) {
       return;
     }
 
@@ -343,15 +648,36 @@ function VideoProjectProductionWorkspaceContent({
       return;
     }
 
+    const currentProject = projectRef.current;
+
+    if (
+      currentProject.scriptId &&
+      currentProject.scriptId !== selectedScriptId
+    ) {
+      const confirmed = window.confirm(
+        "Replace the currently attached script? The existing script will remain in the Script Library.",
+      );
+
+      if (!confirmed) {
+        return;
+      }
+    }
+
+    const updates: UpdateVideoProjectInput = {
+      scriptId: selectedScriptId,
+    };
+
+    if (currentProject.status === "idea") {
+      updates.status = "script";
+    }
+
     setIsSavingScript(true);
     setFeedback(null);
 
     try {
       const updatedProject = await updateCloudVideoProject(
-        project.id,
-        {
-          scriptId: selectedScriptId,
-        },
+        currentProject.id,
+        updates,
       );
 
       if (!updatedProject) {
@@ -363,9 +689,14 @@ function VideoProjectProductionWorkspaceContent({
       }
 
       applyUpdatedProject(updatedProject, true);
+      confirmedReplacementScriptIdRef.current = null;
+      setScriptStageMode("choose");
       setFeedback({
         type: "success",
-        message: "Script attached to this project.",
+        message:
+          currentProject.status === "idea"
+            ? "Script attached and project advanced to Script."
+            : "Script attached to this project.",
       });
     } catch (error) {
       if (mountedRef.current) {
@@ -385,7 +716,7 @@ function VideoProjectProductionWorkspaceContent({
   }
 
   async function handleDetachScript() {
-    if (isDetachDisabled) {
+    if (isDetachDisabled || aiBusyRef.current) {
       return;
     }
 
@@ -409,6 +740,7 @@ function VideoProjectProductionWorkspaceContent({
       }
 
       applyUpdatedProject(updatedProject, true);
+      confirmedReplacementScriptIdRef.current = null;
       setFeedback({
         type: "success",
         message: "Script detached from this project.",
@@ -439,7 +771,7 @@ function VideoProjectProductionWorkspaceContent({
             className="flex flex-wrap items-center gap-2 text-sm font-semibold text-indigo-200"
           >
             <Link
-              href={`/brands/${brandId}`}
+              href={`/brands/${brandId}/projects`}
               className="transition hover:text-white"
             >
               {brandName}
@@ -642,101 +974,231 @@ function VideoProjectProductionWorkspaceContent({
                   Script stage
                 </p>
                 <h2 className="mt-1 text-2xl font-bold tracking-tight text-slate-950">
-                  Attached script
+                  Create or attach a script
                 </h2>
               </div>
             </div>
+
+            {isAiBusy && (
+              <span
+                role="status"
+                className="w-fit rounded-full border border-violet-200 bg-white px-3 py-1.5 text-xs font-semibold text-violet-700 shadow-sm"
+              >
+                {isAttachingGeneratedScript
+                  ? "Attaching generated script..."
+                  : scriptWriterPhase === "saving"
+                    ? "Saving generated script..."
+                    : "Generating script..."}
+              </span>
+            )}
           </header>
 
-          <div className="grid gap-6 p-5 sm:p-7 lg:grid-cols-[minmax(16rem,0.75fr)_minmax(0,1.4fr)]">
-            <div>
-              <label className="block">
-                <span className="text-sm font-semibold text-slate-800">
-                  Saved script
-                </span>
-                <select
-                  value={selectedScriptId}
-                  disabled={isLoadingScripts || isMutating}
-                  onChange={(event) => {
-                    setSelectedScriptId(event.target.value);
-                    setFeedback(null);
-                  }}
-                  className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3.5 py-3 text-sm text-slate-900 outline-none transition focus:border-violet-500 focus:ring-4 focus:ring-violet-100 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  <option value="">Select a saved script</option>
-                  {scripts.map((script) => (
-                    <option key={script.id} value={script.id}>
-                      {script.title}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              {isLoadingScripts && (
-                <p className="mt-3 text-sm text-slate-500">
-                  Loading saved scripts...
-                </p>
-              )}
-
-              {scriptLoadError && (
-                <p
-                  role="alert"
-                  className="mt-3 text-sm font-medium text-rose-600"
-                >
-                  {scriptLoadError}
-                </p>
-              )}
-
-              <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                <button
-                  type="button"
-                  disabled={isAttachDisabled}
-                  onClick={() => void handleAttachScript()}
-                  className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-violet-600/20 transition hover:bg-violet-500 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:shadow-none"
-                >
-                  <Save className="h-4 w-4" aria-hidden="true" />
-                  {isSavingScript ? "Saving..." : "Attach Script"}
-                </button>
-
-                <button
-                  type="button"
-                  disabled={isDetachDisabled}
-                  onClick={() => void handleDetachScript()}
-                  className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-violet-200 px-4 py-2.5 text-sm font-semibold text-violet-700 transition hover:border-violet-300 hover:bg-violet-50 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {isSavingScript ? "Saving..." : "Detach Script"}
-                </button>
+          <div className="space-y-6 p-5 sm:p-7">
+            {project.scriptId ? (
+              <div className="rounded-2xl border border-emerald-200 bg-emerald-50/70 p-5">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <p className="text-xs font-bold uppercase tracking-[0.16em] text-emerald-700">
+                      Attached to this project
+                    </p>
+                    {attachedScript ? (
+                      <>
+                        <h3 className="mt-2 text-lg font-bold text-slate-950">
+                          {attachedScript.title}
+                        </h3>
+                        <p className="mt-1 text-sm text-emerald-800">
+                          {attachedScript.topic}
+                        </p>
+                      </>
+                    ) : (
+                      <p className="mt-2 text-sm leading-6 text-slate-600">
+                        The attached script is not available in this
+                        brand&apos;s current Script Library.
+                      </p>
+                    )}
+                  </div>
+                  <span className="w-fit rounded-full bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white">
+                    Attached
+                  </span>
+                </div>
               </div>
+            ) : (
+              <div className="rounded-2xl border border-dashed border-violet-200 bg-violet-50/50 px-5 py-4 text-sm leading-6 text-slate-600">
+                No script is attached yet. Create one with AI or
+                choose an existing script from this brand.
+              </div>
+            )}
+
+            <div className="grid gap-4 md:grid-cols-2">
+              <button
+                type="button"
+                aria-pressed={scriptStageMode === "ai"}
+                disabled={isMutating}
+                onClick={handleChooseAiScript}
+                className="flex min-h-32 items-start gap-4 rounded-2xl border border-violet-200 bg-violet-50/70 p-5 text-left transition hover:border-violet-400 hover:bg-violet-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-violet-100 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <span className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-violet-600 text-white">
+                  <Sparkles className="h-5 w-5" aria-hidden="true" />
+                </span>
+                <span>
+                  <span className="block text-base font-bold text-slate-950">
+                    Create Script with AI
+                  </span>
+                  <span className="mt-1 block text-sm leading-6 text-slate-600">
+                    Generate with this project and brand context,
+                    then save it to the Script Library.
+                  </span>
+                </span>
+              </button>
+
+              <button
+                type="button"
+                aria-pressed={scriptStageMode === "existing"}
+                disabled={isMutating}
+                onClick={() => {
+                  setScriptStageMode("existing");
+                  setFeedback(null);
+                }}
+                className="flex min-h-32 items-start gap-4 rounded-2xl border border-slate-200 bg-slate-50/70 p-5 text-left transition hover:border-violet-300 hover:bg-white focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-violet-100 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <span className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-slate-900 text-white">
+                  <FileText className="h-5 w-5" aria-hidden="true" />
+                </span>
+                <span>
+                  <span className="block text-base font-bold text-slate-950">
+                    Attach Existing Script
+                  </span>
+                  <span className="mt-1 block text-sm leading-6 text-slate-600">
+                    Select a saved script belonging to this brand and
+                    attach it to the project.
+                  </span>
+                </span>
+              </button>
             </div>
 
-            <div className="min-w-0 rounded-2xl border border-slate-200 bg-slate-50/70 p-5">
-              {previewScript ? (
-                <>
-                  <h3 className="text-lg font-bold text-slate-950">
-                    {previewScript.title}
-                  </h3>
-                  <p className="mt-1 text-sm font-medium text-violet-600">
-                    {previewScript.topic}
+            {scriptStageMode === "choose" && (
+              <p className="text-center text-sm text-slate-500">
+                Choose how you want to complete the Script stage.
+              </p>
+            )}
+
+            {hasOpenedAiWriter && (
+              <div
+                className={
+                  scriptStageMode === "ai"
+                    ? "border-t border-slate-200 pt-6"
+                    : "hidden"
+                }
+              >
+                <ScriptWriter
+                  brand={brand}
+                  embedded
+                  autoSaveAfterGeneration
+                  sessionScope={`video-project:${project.id}`}
+                  initialTopic={aiInitialTopic}
+                  initialKeyPoints={aiInitialKeyPoints}
+                  onScriptSaved={handleAiScriptSaved}
+                  onPhaseChange={handleScriptWriterPhaseChange}
+                />
+              </div>
+            )}
+
+            <div
+              className={
+                scriptStageMode === "existing"
+                  ? "grid gap-6 border-t border-slate-200 pt-6 lg:grid-cols-[minmax(16rem,0.75fr)_minmax(0,1.4fr)]"
+                  : "hidden"
+              }
+            >
+              <div>
+                <label className="block">
+                  <span className="text-sm font-semibold text-slate-800">
+                    Saved script
+                  </span>
+                  <select
+                    value={selectedScriptId}
+                    disabled={isLoadingScripts || isMutating}
+                    onChange={(event) => {
+                      setSelectedScriptId(event.target.value);
+                      setFeedback(null);
+                    }}
+                    className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3.5 py-3 text-sm text-slate-900 outline-none transition focus:border-violet-500 focus:ring-4 focus:ring-violet-100 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    <option value="">Select a saved script</option>
+                    {scripts.map((scriptItem) => (
+                      <option key={scriptItem.id} value={scriptItem.id}>
+                        {scriptItem.title}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                {isLoadingScripts && (
+                  <p className="mt-3 text-sm text-slate-500">
+                    Loading saved scripts...
                   </p>
-                  <div className="mt-4 max-h-72 overflow-y-auto whitespace-pre-wrap rounded-xl border border-slate-200 bg-white p-4 text-sm leading-7 text-slate-700">
-                    {createContentPreview(previewScript.content)}
+                )}
+
+                {scriptLoadError && (
+                  <p
+                    role="alert"
+                    className="mt-3 text-sm font-medium text-rose-600"
+                  >
+                    {scriptLoadError}
+                  </p>
+                )}
+
+                <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                  <button
+                    type="button"
+                    disabled={isAttachDisabled}
+                    onClick={() => void handleAttachScript()}
+                    className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-violet-600/20 transition hover:bg-violet-500 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:shadow-none"
+                  >
+                    <Save className="h-4 w-4" aria-hidden="true" />
+                    {isSavingScript ? "Saving..." : "Attach Script"}
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={isDetachDisabled}
+                    onClick={() => void handleDetachScript()}
+                    className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-violet-200 px-4 py-2.5 text-sm font-semibold text-violet-700 transition hover:border-violet-300 hover:bg-violet-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {isSavingScript ? "Saving..." : "Detach Script"}
+                  </button>
+                </div>
+              </div>
+
+              <div className="min-w-0 rounded-2xl border border-slate-200 bg-slate-50/70 p-5">
+                {previewScript ? (
+                  <>
+                    <h3 className="text-lg font-bold text-slate-950">
+                      {previewScript.title}
+                    </h3>
+                    <p className="mt-1 text-sm font-medium text-violet-600">
+                      {previewScript.topic}
+                    </p>
+                    <div className="mt-4 max-h-72 overflow-y-auto whitespace-pre-wrap rounded-xl border border-slate-200 bg-white p-4 text-sm leading-7 text-slate-700">
+                      {createContentPreview(previewScript.content)}
+                    </div>
+                  </>
+                ) : project.scriptId ? (
+                  <div className="flex min-h-48 items-center justify-center text-center">
+                    <p className="max-w-sm text-sm leading-6 text-slate-500">
+                      The attached script is not available in this
+                      brand&apos;s current Script Library.
+                    </p>
                   </div>
-                </>
-              ) : project.scriptId ? (
-                <div className="flex min-h-48 items-center justify-center text-center">
-                  <p className="max-w-sm text-sm leading-6 text-slate-500">
-                    The attached script is not available in this
-                    brand&apos;s current Script Library.
-                  </p>
-                </div>
-              ) : (
-                <div className="flex min-h-48 items-center justify-center text-center">
-                  <p className="max-w-sm text-sm leading-6 text-slate-500">
-                    Attach a saved script from this brand to keep
-                    production connected to the approved draft.
-                  </p>
-                </div>
-              )}
+                ) : (
+                  <div className="flex min-h-48 items-center justify-center text-center">
+                    <p className="max-w-sm text-sm leading-6 text-slate-500">
+                      Attach a saved script from this brand to keep
+                      production connected to the approved draft.
+                    </p>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </section>
