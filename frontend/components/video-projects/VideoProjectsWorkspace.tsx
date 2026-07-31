@@ -3,6 +3,7 @@
 import {
   ArrowLeft,
   ArrowRight,
+  FileText,
   FolderKanban,
   Plus,
 } from "lucide-react";
@@ -301,9 +302,18 @@ function VideoProjectsWorkspaceContent({
               </p>
             </div>
 
-            <span className="max-w-full truncate rounded-full border border-white/15 bg-white/10 px-4 py-2 text-xs font-semibold text-white backdrop-blur-sm">
-              {brandName}
-            </span>
+            <div className="flex flex-wrap items-center gap-3">
+              <Link
+                href={`/brands/${brandId}/scripts`}
+                className="inline-flex items-center gap-2 rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-bold text-white shadow-lg shadow-violet-950/30 transition hover:bg-violet-500 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-violet-300/40"
+              >
+                <FileText className="h-4 w-4" aria-hidden="true" />
+                Script Library
+              </Link>
+              <span className="max-w-full truncate rounded-full border border-white/15 bg-white/10 px-4 py-2 text-xs font-semibold text-white backdrop-blur-sm">
+                {brandName}
+              </span>
+            </div>
           </div>
         </header>
 

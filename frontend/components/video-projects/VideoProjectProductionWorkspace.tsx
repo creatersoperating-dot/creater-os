@@ -26,7 +26,6 @@ import ScriptWriter, {
 } from "@/components/scripts/ScriptWriter";
 import {
   getCloudVideoProjectById,
-  updateCloudVideoProject,
   updateCloudVideoProjectIfUnchanged,
 } from "@/services/cloudVideoProjectService";
 import type { Brand } from "@/types/brand";
@@ -281,6 +280,67 @@ function VideoProjectProductionWorkspaceContent({
     ]);
   }
 
+  async function updateProjectWithConflictRecovery(
+    capturedProject: CreatorVideoProject,
+    updates: UpdateVideoProjectInput,
+    attemptedAction: string,
+  ): Promise<CreatorVideoProject | null> {
+    const updatedProject =
+      await updateCloudVideoProjectIfUnchanged(
+        capturedProject.id,
+        brandId,
+        capturedProject.updatedAt,
+        updates,
+      );
+
+    if (!mountedRef.current) {
+      return null;
+    }
+
+    if (updatedProject) {
+      return updatedProject;
+    }
+
+    try {
+      const latestProject = await getCloudVideoProjectById(
+        capturedProject.id,
+      );
+
+      if (!mountedRef.current) {
+        return null;
+      }
+
+      if (
+        latestProject &&
+        latestProject.id === capturedProject.id &&
+        latestProject.brandId === brandId
+      ) {
+        applyUpdatedProject(latestProject, true);
+        setTitle(latestProject.title);
+        setTopic(latestProject.topic);
+        confirmedReplacementScriptIdRef.current = null;
+        setFeedback({
+          type: "error",
+          message: `The project changed elsewhere. ${attemptedAction} was not applied, and the latest project has been loaded.`,
+        });
+      } else {
+        setFeedback({
+          type: "error",
+          message: `The project changed elsewhere or is no longer available. ${attemptedAction} was not applied.`,
+        });
+      }
+    } catch {
+      if (mountedRef.current) {
+        setFeedback({
+          type: "error",
+          message: `The project changed elsewhere. ${attemptedAction} was not applied, and the latest project could not be loaded. Refresh before trying again.`,
+        });
+      }
+    }
+
+    return null;
+  }
+
   function handleChooseAiScript() {
     if (isMutating || aiBusyRef.current) {
       return;
@@ -525,20 +585,23 @@ function VideoProjectProductionWorkspaceContent({
       return;
     }
 
+    const currentProject = projectRef.current;
+
     setIsSavingDetails(true);
     setFeedback(null);
 
     try {
-      const updatedProject = await updateCloudVideoProject(
-        project.id,
+      const updatedProject = await updateProjectWithConflictRecovery(
+        currentProject,
         {
           title: normalizedTitle,
           topic: normalizedTopic,
         },
+        "Your project detail changes",
       );
 
       if (!updatedProject) {
-        throw new Error("This video project could not be found.");
+        return;
       }
 
       if (!mountedRef.current) {
@@ -576,10 +639,11 @@ function VideoProjectProductionWorkspaceContent({
       return;
     }
 
+    const currentProject = projectRef.current;
     const targetIndex =
       VIDEO_PROJECT_STATUSES.indexOf(targetStatus);
     const currentIndex = VIDEO_PROJECT_STATUSES.indexOf(
-      project.status,
+      currentProject.status,
     );
 
     if (Math.abs(targetIndex - currentIndex) !== 1) {
@@ -595,15 +659,16 @@ function VideoProjectProductionWorkspaceContent({
     setFeedback(null);
 
     try {
-      const updatedProject = await updateCloudVideoProject(
-        project.id,
+      const updatedProject = await updateProjectWithConflictRecovery(
+        currentProject,
         {
           status: targetStatus,
         },
+        "Your status change",
       );
 
       if (!updatedProject) {
-        throw new Error("This video project could not be found.");
+        return;
       }
 
       if (!mountedRef.current) {
@@ -675,13 +740,14 @@ function VideoProjectProductionWorkspaceContent({
     setFeedback(null);
 
     try {
-      const updatedProject = await updateCloudVideoProject(
-        currentProject.id,
+      const updatedProject = await updateProjectWithConflictRecovery(
+        currentProject,
         updates,
+        "Your script attachment",
       );
 
       if (!updatedProject) {
-        throw new Error("This video project could not be found.");
+        return;
       }
 
       if (!mountedRef.current) {
@@ -720,19 +786,22 @@ function VideoProjectProductionWorkspaceContent({
       return;
     }
 
+    const currentProject = projectRef.current;
+
     setIsSavingScript(true);
     setFeedback(null);
 
     try {
-      const updatedProject = await updateCloudVideoProject(
-        project.id,
+      const updatedProject = await updateProjectWithConflictRecovery(
+        currentProject,
         {
           scriptId: null,
         },
+        "Your script detachment",
       );
 
       if (!updatedProject) {
-        throw new Error("This video project could not be found.");
+        return;
       }
 
       if (!mountedRef.current) {
@@ -771,10 +840,10 @@ function VideoProjectProductionWorkspaceContent({
             className="flex flex-wrap items-center gap-2 text-sm font-semibold text-indigo-200"
           >
             <Link
-              href={`/brands/${brandId}/projects`}
+              href="/brands"
               className="transition hover:text-white"
             >
-              {brandName}
+              Brands
             </Link>
             <ChevronRight
               className="h-4 w-4 opacity-60"
@@ -784,7 +853,7 @@ function VideoProjectProductionWorkspaceContent({
               href={`/brands/${brandId}/projects`}
               className="transition hover:text-white"
             >
-              Video Projects
+              {brandName} / Video Projects
             </Link>
             <ChevronRight
               className="h-4 w-4 opacity-60"
@@ -809,9 +878,18 @@ function VideoProjectProductionWorkspaceContent({
               </p>
             </div>
 
-            <span className="w-fit rounded-full border border-indigo-300/30 bg-indigo-400/15 px-4 py-2 text-xs font-bold text-indigo-100">
-              Current stage: {formatStatus(project.status)}
-            </span>
+            <div className="flex flex-wrap items-center gap-3">
+              <Link
+                href={`/brands/${brandId}/scripts`}
+                className="inline-flex items-center gap-2 rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-bold text-white shadow-lg shadow-violet-950/30 transition hover:bg-violet-500 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-violet-300/40"
+              >
+                <FileText className="h-4 w-4" aria-hidden="true" />
+                Script Library
+              </Link>
+              <span className="w-fit rounded-full border border-indigo-300/30 bg-indigo-400/15 px-4 py-2 text-xs font-bold text-indigo-100">
+                Current stage: {formatStatus(project.status)}
+              </span>
+            </div>
           </div>
         </header>
 
@@ -1009,6 +1087,9 @@ function VideoProjectProductionWorkspaceContent({
                         <p className="mt-1 text-sm text-emerald-800">
                           {attachedScript.topic}
                         </p>
+                        <div className="mt-4 max-h-64 overflow-y-auto whitespace-pre-wrap rounded-xl border border-emerald-200 bg-white/90 p-4 text-sm leading-7 text-slate-700">
+                          {attachedScript.content}
+                        </div>
                       </>
                     ) : (
                       <p className="mt-2 text-sm leading-6 text-slate-600">
