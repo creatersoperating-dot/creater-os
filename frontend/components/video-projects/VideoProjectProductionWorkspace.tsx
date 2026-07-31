@@ -160,8 +160,6 @@ function VideoProjectProductionWorkspaceContent({
 
   const hasDetailChanges =
     title !== project.title || topic !== project.topic;
-  const hasScriptSelectionChanges =
-    selectedScriptId !== (project.scriptId ?? "");
   const currentStatusIndex = VIDEO_PROJECT_STATUSES.indexOf(
     project.status,
   );
@@ -175,6 +173,18 @@ function VideoProjectProductionWorkspaceContent({
       : null;
   const attachedScript =
     scripts.find((script) => script.id === project.scriptId) ?? null;
+  const selectedScript =
+    scripts.find((script) => script.id === selectedScriptId) ?? null;
+  const previewScript = selectedScript ?? attachedScript;
+  const isAttachDisabled =
+    !selectedScript ||
+    selectedScript.id === project.scriptId ||
+    isLoadingScripts ||
+    isSavingScript;
+  const isDetachDisabled =
+    project.scriptId === null ||
+    isLoadingScripts ||
+    isSavingScript;
   const isMutating =
     isSavingDetails || isChangingStatus || isSavingScript;
 
@@ -318,15 +328,12 @@ function VideoProjectProductionWorkspaceContent({
     }
   }
 
-  async function handleSaveScriptSelection() {
-    if (isMutating || !hasScriptSelectionChanges) {
+  async function handleAttachScript() {
+    if (isAttachDisabled) {
       return;
     }
 
-    if (
-      selectedScriptId &&
-      !scripts.some((script) => script.id === selectedScriptId)
-    ) {
+    if (!scripts.some((script) => script.id === selectedScriptId)) {
       setFeedback({
         type: "error",
         message:
@@ -342,7 +349,7 @@ function VideoProjectProductionWorkspaceContent({
       const updatedProject = await updateCloudVideoProject(
         project.id,
         {
-          scriptId: selectedScriptId || null,
+          scriptId: selectedScriptId,
         },
       );
 
@@ -357,9 +364,7 @@ function VideoProjectProductionWorkspaceContent({
       applyUpdatedProject(updatedProject, true);
       setFeedback({
         type: "success",
-        message: updatedProject.scriptId
-          ? "Script attached to this project."
-          : "Script detached from this project.",
+        message: "Script attached to this project.",
       });
     } catch (error) {
       if (mountedRef.current) {
@@ -368,6 +373,52 @@ function VideoProjectProductionWorkspaceContent({
           message: getErrorMessage(
             error,
             "Unable to update the attached script.",
+          ),
+        });
+      }
+    } finally {
+      if (mountedRef.current) {
+        setIsSavingScript(false);
+      }
+    }
+  }
+
+  async function handleDetachScript() {
+    if (isDetachDisabled) {
+      return;
+    }
+
+    setIsSavingScript(true);
+    setFeedback(null);
+
+    try {
+      const updatedProject = await updateCloudVideoProject(
+        project.id,
+        {
+          scriptId: null,
+        },
+      );
+
+      if (!updatedProject) {
+        throw new Error("This video project could not be found.");
+      }
+
+      if (!mountedRef.current) {
+        return;
+      }
+
+      applyUpdatedProject(updatedProject, true);
+      setFeedback({
+        type: "success",
+        message: "Script detached from this project.",
+      });
+    } catch (error) {
+      if (mountedRef.current) {
+        setFeedback({
+          type: "error",
+          message: getErrorMessage(
+            error,
+            "Unable to detach the script.",
           ),
         });
       }
@@ -611,7 +662,7 @@ function VideoProjectProductionWorkspaceContent({
                   }}
                   className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3.5 py-3 text-sm text-slate-900 outline-none transition focus:border-violet-500 focus:ring-4 focus:ring-violet-100 disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  <option value="">No script attached</option>
+                  <option value="">Select a saved script</option>
                   {scripts.map((script) => (
                     <option key={script.id} value={script.id}>
                       {script.title}
@@ -635,38 +686,39 @@ function VideoProjectProductionWorkspaceContent({
                 </p>
               )}
 
-              <button
-                type="button"
-                disabled={
-                  isLoadingScripts ||
-                  !hasScriptSelectionChanges ||
-                  isMutating
-                }
-                onClick={() =>
-                  void handleSaveScriptSelection()
-                }
-                className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-violet-600/20 transition hover:bg-violet-500 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:shadow-none"
-              >
-                <Save className="h-4 w-4" aria-hidden="true" />
-                {isSavingScript
-                  ? "Saving script..."
-                  : selectedScriptId
-                    ? "Attach Script"
-                    : "Detach Script"}
-              </button>
+              <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                <button
+                  type="button"
+                  disabled={isAttachDisabled}
+                  onClick={() => void handleAttachScript()}
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-violet-600/20 transition hover:bg-violet-500 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:shadow-none"
+                >
+                  <Save className="h-4 w-4" aria-hidden="true" />
+                  {isSavingScript ? "Saving..." : "Attach Script"}
+                </button>
+
+                <button
+                  type="button"
+                  disabled={isDetachDisabled}
+                  onClick={() => void handleDetachScript()}
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-violet-200 px-4 py-2.5 text-sm font-semibold text-violet-700 transition hover:border-violet-300 hover:bg-violet-50 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {isSavingScript ? "Saving..." : "Detach Script"}
+                </button>
+              </div>
             </div>
 
             <div className="min-w-0 rounded-2xl border border-slate-200 bg-slate-50/70 p-5">
-              {attachedScript ? (
+              {previewScript ? (
                 <>
                   <h3 className="text-lg font-bold text-slate-950">
-                    {attachedScript.title}
+                    {previewScript.title}
                   </h3>
                   <p className="mt-1 text-sm font-medium text-violet-600">
-                    {attachedScript.topic}
+                    {previewScript.topic}
                   </p>
                   <div className="mt-4 max-h-72 overflow-y-auto whitespace-pre-wrap rounded-xl border border-slate-200 bg-white p-4 text-sm leading-7 text-slate-700">
-                    {createContentPreview(attachedScript.content)}
+                    {createContentPreview(previewScript.content)}
                   </div>
                 </>
               ) : project.scriptId ? (
