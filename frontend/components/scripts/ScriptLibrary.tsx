@@ -10,6 +10,11 @@ import {
 } from "@/services/cloudScriptService";
 import type { CreatorScript } from "../../types/script";
 
+import {
+  getLocalScriptCount,
+  importLocalScriptsToBrand,
+} from "@/services/localScriptImportService";
+
 interface ScriptLibraryProps {
   brandId: string;
 }
@@ -30,6 +35,8 @@ function formatUpdatedAt(updatedAt: string): string {
 export default function ScriptLibrary({ brandId }: ScriptLibraryProps) {
   const [scripts, setScripts] = useState<CreatorScript[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [localScriptCount, setLocalScriptCount] = useState(0);
+  const [isImporting, setIsImporting] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [title, setTitle] = useState("");
   const [topic, setTopic] = useState("");
@@ -43,6 +50,10 @@ export default function ScriptLibrary({ brandId }: ScriptLibraryProps) {
     () => scripts.find((script) => script.id === selectedId) ?? null,
     [scripts, selectedId],
   );
+
+  useEffect(() => {
+    setLocalScriptCount(getLocalScriptCount());
+  }, [brandId]);
 
   useEffect(() => {
     let isActive = true;
@@ -183,6 +194,73 @@ export default function ScriptLibrary({ brandId }: ScriptLibraryProps) {
     setFeedback(null);
   }
 
+  async function handleImportLocalScripts() {
+    if (isImporting || isSaving || isDeleting) {
+      return;
+    }
+
+    const confirmed = window.confirm(
+      "Local scripts will be copied into the currently open cloud brand. The local copies will remain unchanged. Continue?",
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setIsImporting(true);
+    setFeedback(null);
+
+    try {
+      const result = await importLocalScriptsToBrand(brandId);
+      const refreshedScripts = await getCloudScriptsByBrand(brandId);
+      const scriptsWithDraft =
+        hasUnsavedChanges && selectedScript
+          ? refreshedScripts.some(
+              (script) => script.id === selectedScript.id,
+            )
+            ? refreshedScripts.map((script) =>
+                script.id === selectedScript.id
+                  ? selectedScript
+                  : script,
+              )
+            : [selectedScript, ...refreshedScripts]
+          : refreshedScripts;
+
+      setScripts(scriptsWithDraft);
+      setSelectedId((currentSelectedId) =>
+        currentSelectedId &&
+        scriptsWithDraft.some(
+          (script) => script.id === currentSelectedId,
+        )
+          ? currentSelectedId
+          : scriptsWithDraft[0]?.id ?? null,
+      );
+
+      const duplicateLabel =
+        result.skipped === 1 ? "duplicate" : "duplicates";
+
+      setFeedback({
+        type: "success",
+        message:
+          result.imported > 0
+            ? `Imported ${result.imported} local ${
+                result.imported === 1 ? "script" : "scripts"
+              }. ${result.skipped} ${duplicateLabel} skipped.`
+            : `No new scripts were imported. ${result.skipped} ${duplicateLabel} skipped.`,
+      });
+    } catch (error) {
+      setFeedback({
+        type: "error",
+        message:
+          error instanceof Error
+            ? error.message
+            : "Unable to import local scripts.",
+      });
+    } finally {
+      setIsImporting(false);
+    }
+  }
+
   async function handleSave() {
     if (!selectedScript) {
       return;
@@ -288,6 +366,20 @@ export default function ScriptLibrary({ brandId }: ScriptLibraryProps) {
           <h2 className="mt-1 text-2xl font-semibold tracking-tight text-slate-950 dark:text-white">
             Script Library
           </h2>
+          {localScriptCount > 0 && (
+            <button
+              type="button"
+              onClick={() => void handleImportLocalScripts()}
+              disabled={isImporting || isSaving || isDeleting}
+              className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {isImporting
+                ? "Importing..."
+                : `Import ${localScriptCount} Local ${
+                    localScriptCount === 1 ? "Script" : "Scripts"
+                  }`}
+            </button>
+          )}
         </div>
         <div className="w-fit rounded-full border border-violet-200 bg-white/80 px-3 py-1.5 text-sm font-medium text-slate-700 shadow-sm dark:border-violet-400/20 dark:bg-white/5 dark:text-slate-200">
           {scripts.length} saved {scripts.length === 1 ? "script" : "scripts"}
@@ -426,7 +518,7 @@ export default function ScriptLibrary({ brandId }: ScriptLibraryProps) {
                 <button
                   type="button"
                   onClick={handleDelete}
-                  disabled={isDeleting || isSaving}
+                  disabled={isDeleting || isSaving || isImporting}
                   className="rounded-xl border border-rose-200 px-4 py-2.5 text-sm font-semibold text-rose-600 transition hover:border-rose-300 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-rose-400/20 dark:text-rose-300 dark:hover:bg-rose-400/10"
                 >
                   {isDeleting ? "Deleting…" : "Delete"}
@@ -434,7 +526,12 @@ export default function ScriptLibrary({ brandId }: ScriptLibraryProps) {
                 <button
                   type="button"
                   onClick={handleSave}
-                  disabled={!hasUnsavedChanges || isSaving || isDeleting}
+                  disabled={
+                    !hasUnsavedChanges ||
+                    isSaving ||
+                    isDeleting ||
+                    isImporting
+                  }
                   className="rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-violet-600/20 transition hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-50 disabled:shadow-none"
                 >
                   {isSaving ? "Saving…" : "Save Changes"}
