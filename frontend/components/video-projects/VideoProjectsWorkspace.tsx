@@ -96,6 +96,8 @@ function VideoProjectsWorkspaceContent({
   const [title, setTitle] = useState("");
   const [topic, setTopic] = useState("");
   const [feedback, setFeedback] = useState<Feedback | null>(null);
+  const [initialLoadError, setInitialLoadError] =
+    useState<string | null>(null);
   const mountedRef = useRef(false);
   const currentBrandIdRef = useRef(brandId);
   const requestIdRef = useRef(0);
@@ -113,7 +115,10 @@ function VideoProjectsWorkspaceContent({
   useEffect(() => {
     let isActive = true;
 
-    async function loadProjects(failureMessage: string) {
+    async function loadProjects(
+      failureMessage: string,
+      isInitialLoad: boolean,
+    ) {
       const requestId = ++requestIdRef.current;
 
       try {
@@ -128,6 +133,7 @@ function VideoProjectsWorkspaceContent({
         }
 
         setProjects(cloudProjects);
+        setInitialLoadError(null);
         setFeedback((current) =>
           current?.type === "error" ? null : current,
         );
@@ -136,10 +142,16 @@ function VideoProjectsWorkspaceContent({
           isActive &&
           requestId === requestIdRef.current
         ) {
-          setFeedback({
-            type: "error",
-            message: getErrorMessage(error, failureMessage),
-          });
+          const message = getErrorMessage(error, failureMessage);
+
+          if (isInitialLoad) {
+            setInitialLoadError(message);
+          } else {
+            setFeedback({
+              type: "error",
+              message,
+            });
+          }
         }
       } finally {
         if (
@@ -158,11 +170,13 @@ function VideoProjectsWorkspaceContent({
 
       void loadProjects(
         "Unable to refresh video projects. Please try again.",
+        false,
       );
     }
 
     void loadProjects(
       "Unable to load video projects. Please try again.",
+      true,
     );
     window.addEventListener(
       CLOUD_VIDEO_PROJECTS_CHANGED_EVENT,
@@ -236,6 +250,8 @@ function VideoProjectsWorkspaceContent({
         requestId === requestIdRef.current
       ) {
         setProjects(refreshedProjects);
+        setInitialLoadError(null);
+        setIsLoading(false);
         setFeedback({
           type: "success",
           message: "Video project created.",
@@ -410,6 +426,15 @@ function VideoProjectsWorkspaceContent({
               {isLoading ? (
                 <div className="flex min-h-80 items-center justify-center text-sm text-slate-500">
                   Loading video projects...
+                </div>
+              ) : initialLoadError ? (
+                <div className="flex min-h-80 items-center justify-center rounded-2xl border border-rose-200 bg-rose-50/70 px-6 py-14 text-center">
+                  <p
+                    role="alert"
+                    className="max-w-md text-sm font-medium leading-6 text-rose-700"
+                  >
+                    {initialLoadError}
+                  </p>
                 </div>
               ) : projects.length === 0 ? (
                 <div className="flex min-h-80 flex-col items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-slate-50/70 px-6 py-14 text-center">

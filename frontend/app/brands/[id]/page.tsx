@@ -44,7 +44,7 @@ export default async function BrandWorkspace({
         <div className="mx-auto max-w-[1500px] space-y-10">
           <section
             aria-label="Script Writer workspace"
-            className="relative [&>section:first-child>header>div]:gap-28 sm:[&>section:first-child>header>div]:gap-7"
+            className="relative [&>section:first-of-type>header>div]:gap-28 sm:[&>section:first-of-type>header>div]:gap-7"
           >
             <Link
               href={`/brands/${brand.id}/projects`}
