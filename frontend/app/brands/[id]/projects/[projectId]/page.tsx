@@ -65,8 +65,7 @@ export default async function VideoProjectPage({
   return (
     <DashboardLayout>
       <VideoProjectProductionWorkspace
-        brandId={brand.id}
-        brandName={brand.name}
+        brand={brand}
         initialProject={project}
       />
     </DashboardLayout>

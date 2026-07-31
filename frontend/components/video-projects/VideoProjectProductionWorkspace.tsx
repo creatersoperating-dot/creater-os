@@ -21,6 +21,7 @@ import {
 
 import { getCloudScriptsByBrand } from "@/services/cloudScriptService";
 import { updateCloudVideoProject } from "@/services/cloudVideoProjectService";
+import type { Brand } from "@/types/brand";
 import type { CreatorScript } from "@/types/script";
 import {
   VIDEO_PROJECT_STATUSES,
@@ -31,8 +32,7 @@ import {
 import VideoProjectStageRail from "./VideoProjectStageRail";
 
 interface VideoProjectProductionWorkspaceProps {
-  brandId: string;
-  brandName: string;
+  brand: Brand;
   initialProject: CreatorVideoProject;
 }
 
@@ -85,17 +85,18 @@ export default function VideoProjectProductionWorkspace(
 ) {
   return (
     <VideoProjectProductionWorkspaceContent
-      key={`${props.brandId}:${props.initialProject.id}`}
+      key={`${props.brand.id}:${props.initialProject.id}`}
       {...props}
     />
   );
 }
 
 function VideoProjectProductionWorkspaceContent({
-  brandId,
-  brandName,
+  brand,
   initialProject,
 }: VideoProjectProductionWorkspaceProps) {
+  const brandId = brand.id;
+  const brandName = brand.name;
   const [project, setProject] =
     useState<CreatorVideoProject>(initialProject);
   const [title, setTitle] = useState(initialProject.title);
