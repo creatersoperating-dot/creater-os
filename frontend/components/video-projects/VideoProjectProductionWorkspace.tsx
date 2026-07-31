@@ -7,7 +7,6 @@ import {
   ChevronRight,
   Clapperboard,
   FileText,
-  Mic,
   Save,
   Send,
   Sparkles,
@@ -38,6 +37,7 @@ import {
 } from "@/types/videoProject";
 
 import VideoProjectStageRail from "./VideoProjectStageRail";
+import VoiceProductionPanel from "./VoiceProductionPanel";
 
 interface VideoProjectProductionWorkspaceProps {
   brand: Brand;
@@ -138,6 +138,7 @@ function VideoProjectProductionWorkspaceContent({
     useState<ScriptWriterPhase>("idle");
   const [isAttachingGeneratedScript, setIsAttachingGeneratedScript] =
     useState(false);
+  const [isAudioBusy, setIsAudioBusy] = useState(false);
   const mountedRef = useRef(false);
   const projectRef = useRef(initialProject);
   const aiOperationCounterRef = useRef(0);
@@ -238,11 +239,12 @@ function VideoProjectProductionWorkspaceContent({
   const previewScript = selectedScript ?? attachedScript;
   const isAiBusy =
     scriptWriterPhase !== "idle" || isAttachingGeneratedScript;
-  const isMutating =
+  const isNonAudioMutationBusy =
     isSavingDetails ||
     isChangingStatus ||
     isSavingScript ||
     isAiBusy;
+  const isMutating = isNonAudioMutationBusy || isAudioBusy;
   const isAttachDisabled =
     !selectedScript ||
     selectedScript.id === project.scriptId ||
@@ -1284,23 +1286,19 @@ function VideoProjectProductionWorkspaceContent({
           </div>
         </section>
 
-        <div className="grid gap-6 lg:grid-cols-2">
-          <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-xl shadow-slate-950/5">
-            <span className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-fuchsia-100 text-fuchsia-700">
-              <Mic className="h-5 w-5" aria-hidden="true" />
-            </span>
-            <p className="mt-5 text-xs font-semibold uppercase tracking-[0.18em] text-fuchsia-600">
-              Voice / Audio
-            </p>
-            <h2 className="mt-1 text-2xl font-bold tracking-tight text-slate-950">
-              Narration workspace
-            </h2>
-            <p className="mt-3 text-sm leading-6 text-slate-500">
-              Voice and audio generation will be added in a future
-              milestone. No audio is generated or stored here yet.
-            </p>
-          </section>
+        <VoiceProductionPanel
+          brandId={brandId}
+          project={project}
+          attachedScript={attachedScript}
+          isScriptLoading={isLoadingScripts}
+          disabled={isNonAudioMutationBusy}
+          onProjectUpdated={(updatedProject) => {
+            applyUpdatedProject(updatedProject);
+          }}
+          onBusyChange={setIsAudioBusy}
+        />
 
+        <div className="grid gap-6 lg:grid-cols-2">
           <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-xl shadow-slate-950/5">
             <span className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-amber-100 text-amber-700">
               <Clapperboard

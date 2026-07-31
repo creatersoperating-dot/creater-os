@@ -177,6 +177,7 @@ export async function createCloudVideoProject(
     id: crypto.randomUUID(),
     brandId: normalizeRequiredText(input.brandId, "brandId"),
     scriptId: normalizeOptionalId(input.scriptId),
+    audioGenerationId: null,
     title: normalizeRequiredText(input.title, "title"),
     topic: normalizeOptionalText(input.topic),
     status: input.status ?? "idea",
