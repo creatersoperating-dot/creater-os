@@ -1,4 +1,5 @@
 import DashboardLayout from "@/components/layout/DashboardLayout";
+import Link from "next/link";
 import { getServerCloudBrandById } from "@/services/serverCloudBrandService";
 import ChatWindow from "@/components/ai/ChatWindow";
 import ScriptWriter from "@/components/scripts/ScriptWriter";
@@ -41,6 +42,15 @@ export default async function BrandWorkspace({
     <DashboardLayout>
       <div className="-m-8 min-h-screen bg-slate-50 p-4 sm:p-6 lg:p-8">
         <div className="mx-auto max-w-[1500px] space-y-10">
+          <div className="flex justify-end">
+            <Link
+              href={`/brands/${brand.id}/projects`}
+              className="inline-flex items-center justify-center rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-indigo-600/20 transition hover:bg-indigo-500 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-indigo-200"
+            >
+              Video Projects
+            </Link>
+          </div>
+
           <section aria-label="Script Writer workspace">
       <ScriptWriter brand={brand} />
       <ScriptLibrary brandId={brand.id} />
