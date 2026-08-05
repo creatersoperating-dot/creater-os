@@ -178,6 +178,7 @@ export async function createCloudVideoProject(
     brandId: normalizeRequiredText(input.brandId, "brandId"),
     scriptId: normalizeOptionalId(input.scriptId),
     audioGenerationId: null,
+    videoGenerationId: null,
     title: normalizeRequiredText(input.title, "title"),
     topic: normalizeOptionalText(input.topic),
     status: input.status ?? "idea",
@@ -270,27 +271,30 @@ export async function updateCloudVideoProjectIfUnchanged(
 }
 
 export async function deleteCloudVideoProject(
+  brandId: string,
   id: string,
+  expectedUpdatedAt: string,
 ): Promise<boolean> {
-  const supabase = createClient();
-  const user = await requireAuthenticatedUser(supabase);
+  const normalizedBrandId = normalizeRequiredText(brandId, "brandId");
   const normalizedId = normalizeRequiredText(id, "id");
-
-  const { data, error } = await supabase
-    .from("video_projects")
-    .delete()
-    .eq("user_id", user.id)
-    .eq("id", normalizedId)
-    .select("id");
-
-  if (error) {
-    throw error;
+  const normalizedExpectedUpdatedAt = normalizeRequiredText(expectedUpdatedAt, "expectedUpdatedAt");
+  const response = await fetch(`/api/brands/${encodeURIComponent(normalizedBrandId)}/projects/${encodeURIComponent(normalizedId)}`, {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ expectedUpdatedAt: normalizedExpectedUpdatedAt }),
+  });
+  let body: unknown;
+  try { body = await response.json(); }
+  catch { throw new Error("Project deletion returned an unreadable response."); }
+  if (!response.ok) {
+    const safeMessage = body && typeof body === "object" && "error" in body
+      && body.error && typeof body.error === "object" && "message" in body.error && typeof body.error.message === "string"
+      ? body.error.message : "Unable to delete the video project.";
+    throw new Error(safeMessage);
   }
-
-  if (!data || data.length === 0) {
-    return false;
+  if (!body || typeof body !== "object" || !("deleted" in body) || typeof body.deleted !== "boolean") {
+    throw new Error("Project deletion returned a malformed response.");
   }
-
-  dispatchProjectsChanged();
-  return true;
+  if (body.deleted) dispatchProjectsChanged();
+  return body.deleted;
 }

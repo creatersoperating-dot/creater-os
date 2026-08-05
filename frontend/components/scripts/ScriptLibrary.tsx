@@ -52,16 +52,33 @@ export default function ScriptLibrary({ brandId }: ScriptLibraryProps) {
   );
 
   useEffect(() => {
-    setLocalScriptCount(getLocalScriptCount());
+    let isActive = true;
+
+    queueMicrotask(() => {
+      if (isActive) {
+        setLocalScriptCount(getLocalScriptCount());
+      }
+    });
+
+    return () => {
+      isActive = false;
+    };
   }, [brandId]);
 
   useEffect(() => {
     let isActive = true;
-    setFeedback(null);
-    setIsLoading(true);
-    draftScriptIdRef.current = null;
-    setScripts([]);
-    setSelectedId(null);
+
+    queueMicrotask(() => {
+      if (!isActive) {
+        return;
+      }
+
+      setFeedback(null);
+      setIsLoading(true);
+      draftScriptIdRef.current = null;
+      setScripts([]);
+      setSelectedId(null);
+    });
 
     void getCloudScriptsByBrand(brandId)
       .then((brandScripts) => {
@@ -91,22 +108,34 @@ export default function ScriptLibrary({ brandId }: ScriptLibraryProps) {
   }, [brandId]);
 
   useEffect(() => {
-    if (!selectedScript) {
-      draftScriptIdRef.current = null;
-      setTitle("");
-      setTopic("");
-      setContent("");
-      return;
-    }
+    let isActive = true;
 
-    if (draftScriptIdRef.current === selectedScript.id) {
-      return;
-    }
+    queueMicrotask(() => {
+      if (!isActive) {
+        return;
+      }
 
-    draftScriptIdRef.current = selectedScript.id;
-    setTitle(selectedScript.title);
-    setTopic(selectedScript.topic);
-    setContent(selectedScript.content);
+      if (!selectedScript) {
+        draftScriptIdRef.current = null;
+        setTitle("");
+        setTopic("");
+        setContent("");
+        return;
+      }
+
+      if (draftScriptIdRef.current === selectedScript.id) {
+        return;
+      }
+
+      draftScriptIdRef.current = selectedScript.id;
+      setTitle(selectedScript.title);
+      setTopic(selectedScript.topic);
+      setContent(selectedScript.content);
+    });
+
+    return () => {
+      isActive = false;
+    };
   }, [selectedScript]);
 
   const hasUnsavedChanges =

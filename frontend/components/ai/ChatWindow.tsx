@@ -2,7 +2,6 @@
 
 import { MessageSquare, Send } from "lucide-react";
 import {
-  useEffect,
   useRef,
   useState,
   type FormEvent,
@@ -23,40 +22,37 @@ interface Message {
   content: string;
 }
 
+function getOrCreateSessionId(): string {
+  const storageKey = "creatoros-session";
+  const existing = window.localStorage.getItem(storageKey);
+
+  if (existing) {
+    return existing;
+  }
+
+  const id = window.crypto.randomUUID();
+  window.localStorage.setItem(storageKey, id);
+
+  return id;
+}
+
 export default function ChatWindow({
   brand,
 }: ChatWindowProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(false);
-  const [sessionId, setSessionId] = useState("");
   const [draft, setDraft] = useState("");
   const loadingRef = useRef(false);
 
-  useEffect(() => {
-    const existing = localStorage.getItem("creatoros-session");
-
-    if (existing) {
-      setSessionId(existing);
-      return;
-    }
-
-    const id = crypto.randomUUID();
-
-    localStorage.setItem("creatoros-session", id);
-
-    setSessionId(id);
-  }, []);
 
   async function sendMessage(message: string) {
     const normalizedMessage = message.trim();
 
-    if (
-      !normalizedMessage ||
-      loadingRef.current ||
-      !sessionId
-    ) {
+    if (!normalizedMessage || loadingRef.current) {
       return;
     }
+
+    const sessionId = getOrCreateSessionId();
 
     loadingRef.current = true;
     setLoading(true);
@@ -127,11 +123,7 @@ export default function ChatWindow({
 
     event.preventDefault();
 
-    if (
-      !draft.trim() ||
-      loadingRef.current ||
-      !sessionId
-    ) {
+    if (!draft.trim() || loadingRef.current) {
       return;
     }
 
@@ -196,11 +188,7 @@ export default function ChatWindow({
             </p>
             <button
               type="submit"
-              disabled={
-                !draft.trim() ||
-                loading ||
-                !sessionId
-              }
+              disabled={!draft.trim() || loading}
               className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-xs font-bold text-white shadow-md shadow-indigo-600/20 transition hover:bg-indigo-700 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-indigo-200 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:shadow-none sm:w-auto"
               aria-label="Send message"
             >

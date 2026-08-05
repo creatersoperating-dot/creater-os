@@ -9,6 +9,7 @@ export interface VideoProjectRow {
   brand_id: string;
   script_id: string | null;
   audio_generation_id: string | null;
+  video_generation_id: string | null;
   title: string;
   topic: string;
   status: VideoProjectStatus;
@@ -24,6 +25,7 @@ export function mapVideoProjectRowToProject(
     brandId: row.brand_id,
     scriptId: row.script_id,
     audioGenerationId: row.audio_generation_id,
+    videoGenerationId: row.video_generation_id,
     title: row.title,
     topic: row.topic,
     status: row.status,
@@ -42,6 +44,7 @@ export function mapVideoProjectToRow(
     brand_id: project.brandId,
     script_id: project.scriptId,
     audio_generation_id: project.audioGenerationId,
+    video_generation_id: project.videoGenerationId,
     title: project.title,
     topic: project.topic,
     status: project.status,
