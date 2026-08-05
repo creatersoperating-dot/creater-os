@@ -234,6 +234,10 @@ function parseProject(value: unknown): CreatorVideoProject {
       project.audioGenerationId,
       "project audio generation ID",
     ),
+    videoGenerationId: requireNullableString(
+      project.videoGenerationId,
+      "project video generation ID",
+    ),
     title: requireString(project.title, "project title"),
     topic:
       typeof project.topic === "string"

@@ -5,13 +5,14 @@ import {
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
-  Clapperboard,
   FileText,
   Save,
   Send,
   Sparkles,
+  Trash2,
 } from "lucide-react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   useEffect,
   useRef,
@@ -24,6 +25,7 @@ import ScriptWriter, {
   type ScriptWriterPhase,
 } from "@/components/scripts/ScriptWriter";
 import {
+  deleteCloudVideoProject,
   getCloudVideoProjectById,
   updateCloudVideoProjectIfUnchanged,
 } from "@/services/cloudVideoProjectService";
@@ -38,6 +40,7 @@ import {
 
 import VideoProjectStageRail from "./VideoProjectStageRail";
 import VoiceProductionPanel from "./VoiceProductionPanel";
+import VideoProductionPanel from "./VideoProductionPanel";
 
 interface VideoProjectProductionWorkspaceProps {
   brand: Brand;
@@ -113,6 +116,7 @@ function VideoProjectProductionWorkspaceContent({
   brand,
   initialProject,
 }: VideoProjectProductionWorkspaceProps) {
+  const router = useRouter();
   const brandId = brand.id;
   const brandName = brand.name;
   const [project, setProject] =
@@ -139,6 +143,8 @@ function VideoProjectProductionWorkspaceContent({
   const [isAttachingGeneratedScript, setIsAttachingGeneratedScript] =
     useState(false);
   const [isAudioBusy, setIsAudioBusy] = useState(false);
+  const [isVideoBusy, setIsVideoBusy] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
   const mountedRef = useRef(false);
   const projectRef = useRef(initialProject);
   const aiOperationCounterRef = useRef(0);
@@ -146,6 +152,7 @@ function VideoProjectProductionWorkspaceContent({
   const aiBusyRef = useRef(false);
   const generatedAttachmentLatchRef = useRef(false);
   const generatedAttachmentTokenRef = useRef<number | null>(null);
+  const deleteLatchRef = useRef(false);
   const confirmedReplacementScriptIdRef = useRef<string | null>(null);
   const generatedScriptsRef = useRef<CreatorScript[]>([]);
   const scriptWriterPhaseRef =
@@ -161,6 +168,7 @@ function VideoProjectProductionWorkspaceContent({
       aiBusyRef.current = false;
       generatedAttachmentLatchRef.current = false;
       generatedAttachmentTokenRef.current = null;
+      deleteLatchRef.current = false;
     };
   }, []);
 
@@ -232,6 +240,9 @@ function VideoProjectProductionWorkspaceContent({
     currentStatusIndex < VIDEO_PROJECT_STATUSES.length - 1
       ? VIDEO_PROJECT_STATUSES[currentStatusIndex + 1]
       : null;
+  const isVideoPrerequisiteMissing =
+    project.videoGenerationId === null &&
+    (nextStatus === "video" || nextStatus === "ready");
   const attachedScript =
     scripts.find((script) => script.id === project.scriptId) ?? null;
   const selectedScript =
@@ -244,7 +255,8 @@ function VideoProjectProductionWorkspaceContent({
     isChangingStatus ||
     isSavingScript ||
     isAiBusy;
-  const isMutating = isNonAudioMutationBusy || isAudioBusy;
+  const isMutating =
+    isNonAudioMutationBusy || isAudioBusy || isVideoBusy || isDeleting;
   const isAttachDisabled =
     !selectedScript ||
     selectedScript.id === project.scriptId ||
@@ -341,6 +353,32 @@ function VideoProjectProductionWorkspaceContent({
     }
 
     return null;
+  }
+
+  async function handleDeleteProject() {
+    if (isMutating || deleteLatchRef.current) return;
+    if (!window.confirm("Permanently delete this project and its private narration, videos, scene assets, and production history? This cannot be undone.")) return;
+    deleteLatchRef.current = true;
+    setIsDeleting(true);
+    setFeedback(null);
+    let navigating = false;
+    try {
+      const deleted = await deleteCloudVideoProject(brandId, project.id, project.updatedAt);
+      if (!deleted) throw new Error("The project could not be found or changed before deletion started.");
+      if (!mountedRef.current) return;
+      navigating = true;
+      router.replace(`/brands/${brandId}/projects`);
+      router.refresh();
+    } catch (error) {
+      if (mountedRef.current) {
+        setFeedback({ type: "error", message: getErrorMessage(error, "Unable to delete the project and its media. Retry deletion to continue cleanup.") });
+      }
+    } finally {
+      if (!navigating) {
+        deleteLatchRef.current = false;
+        if (mountedRef.current) setIsDeleting(false);
+      }
+    }
   }
 
   function handleChooseAiScript() {
@@ -958,7 +996,9 @@ function VideoProjectProductionWorkspaceContent({
 
             <button
               type="button"
-              disabled={!nextStatus || isMutating}
+              disabled={
+                !nextStatus || isMutating || isVideoPrerequisiteMissing
+              }
               onClick={() => {
                 if (nextStatus) {
                   void handleStatusChange(nextStatus);
@@ -1291,33 +1331,25 @@ function VideoProjectProductionWorkspaceContent({
           project={project}
           attachedScript={attachedScript}
           isScriptLoading={isLoadingScripts}
-          disabled={isNonAudioMutationBusy}
+          disabled={isNonAudioMutationBusy || isVideoBusy}
           onProjectUpdated={(updatedProject) => {
             applyUpdatedProject(updatedProject);
           }}
           onBusyChange={setIsAudioBusy}
         />
 
-        <div className="grid gap-6 lg:grid-cols-2">
-          <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-xl shadow-slate-950/5">
-            <span className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-amber-100 text-amber-700">
-              <Clapperboard
-                className="h-5 w-5"
-                aria-hidden="true"
-              />
-            </span>
-            <p className="mt-5 text-xs font-semibold uppercase tracking-[0.18em] text-amber-600">
-              Video
-            </p>
-            <h2 className="mt-1 text-2xl font-bold tracking-tight text-slate-950">
-              Video production
-            </h2>
-            <p className="mt-3 text-sm leading-6 text-slate-500">
-              Video generation will be added in a future milestone.
-              This panel is a production-stage placeholder only.
-            </p>
-          </section>
+        <VideoProductionPanel
+          brandId={brandId}
+          project={project}
+          attachedScript={attachedScript}
+          disabled={isNonAudioMutationBusy || isAudioBusy}
+          onProjectUpdated={(updatedProject) => {
+            applyUpdatedProject(updatedProject);
+          }}
+          onBusyChange={setIsVideoBusy}
+        />
 
+        <div className="grid gap-6 lg:grid-cols-2">
           <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-xl shadow-slate-950/5">
             <span className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-emerald-100 text-emerald-700">
               <CheckCircle2
@@ -1354,13 +1386,24 @@ function VideoProjectProductionWorkspaceContent({
           </section>
         </div>
 
-        <Link
-          href={`/brands/${brandId}/projects`}
-          className="inline-flex items-center gap-2 text-sm font-semibold text-indigo-700 transition hover:text-indigo-500"
-        >
-          <ArrowLeft className="h-4 w-4" aria-hidden="true" />
-          Back to all video projects
-        </Link>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <Link
+            href={`/brands/${brandId}/projects`}
+            className="inline-flex items-center gap-2 text-sm font-semibold text-indigo-700 transition hover:text-indigo-500"
+          >
+            <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+            Back to all video projects
+          </Link>
+          <button
+            type="button"
+            disabled={isMutating}
+            onClick={() => void handleDeleteProject()}
+            className="inline-flex items-center justify-center gap-2 rounded-xl border border-rose-200 bg-white px-4 py-2.5 text-sm font-semibold text-rose-700 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <Trash2 className="h-4 w-4" aria-hidden="true" />
+            {isDeleting ? "Deleting project and media..." : "Delete project"}
+          </button>
+        </div>
       </div>
     </div>
   );
