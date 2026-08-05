@@ -1,126 +1,96 @@
-# CreatorOS Roadmap
+﻿# CreatorOS Roadmap
 
-Version: v0.1
+## Current Release
 
----
+### v0.7 - Video Production Foundation
 
-# Phase 1 — Foundation ✅
+Status: Released
 
-Status: Complete
+Completed:
 
-- Project setup
-- Next.js architecture
-- Dashboard layout
-- Brand management
-- AI chat interface
-- Gemini integration
-- AI router
-- Provider architecture
-- Documentation
+- Video-production data model
+- Scene planning foundation
+- Deterministic mock MP4 renderer
+- Video-generation lifecycle
+- Lease, heartbeat, recovery, and fencing
+- Secure private media storage
+- Ready-video attachment
+- Playback and download access
+- Hosted Supabase migrations 006-011
 
----
-
-# Phase 2 — Brand Intelligence 🚧
+## Phase 1 - Production Division
 
 Status: In Progress
 
-## Goals
+### v0.8 - Production Division Completion
 
-- Connect AI chat to selected brand
-- Brand-aware prompts
-- AI Brain
-- Brand knowledge context
-- Prompt builder
-- Persistent brand settings
+Goals:
 
----
+- Real visual asset provider integration
+- Narration and audio muxing
+- Production renderer configuration
+- Provider-independent execution
+- Duration, format, and storage validation
+- Cost, timeout, retry, and failure controls
+- Secure final-video playback and download
+- Mock mode retained for local and automated testing
 
-# Phase 3 — AI Agents
+### Later Production Work
 
-Status: Planned
+- Multiple visual-production providers
+- Multiple voice providers
+- Advanced editing and transitions
+- Captions and subtitles
+- Music and sound effects
+- Thumbnail-production workflow
+- Quality-review workflow
 
-Agents
+## Phase 2 - Creator Intelligence
 
-- Research Agent
-- Script Agent
-- SEO Agent
-- Thumbnail Agent
-- Strategist Agent
-- Analytics Agent
+Modules:
 
----
+- Competitor Brain
+- Outlier Brain
+- Comment Brain
+- Gap Brain
+- Angle Brain
+- Prompt Brain
+- Approved Video Brief
 
-# Phase 4 — Creator Workspace
+The Approved Video Brief becomes the input contract for the Production Division.
 
-Status: Planned
+## Phase 3 - Analytics
 
-Modules
+Modules:
 
-- Ideas
-- Scripts
-- Thumbnails
-- Titles
-- Descriptions
-- Community Posts
-- Shorts Generator
+- YouTube connection
+- Channel analysis
+- Video-performance analysis
+- Audience and comment analysis
+- Experiment tracking
+- Performance feedback into Creator Intelligence
 
----
+## Phase 4 - Secondary App
 
-# Phase 5 — Knowledge Base
+The secondary rewards and task application remains a separate product connected to the wider company ecosystem.
 
-Status: Planned
+## Phase 5 - Enterprise
 
-Features
+Modules:
 
-- Upload PDFs
-- Upload Documents
-- Brand Knowledge
-- RAG Search
-- Memory System
+- Organizations and teams
+- Roles and permissions
+- Agency workspaces
+- Approval workflows
+- Usage controls
+- Audit history
+- Enterprise provider configuration
 
----
+## Long-Term Sequence
 
-# Phase 6 — Automation
-
-Status: Planned
-
-- Workflow Builder
-- Scheduled Tasks
-- Auto Publishing
-- Multi-step AI Workflows
-
----
-
-# Phase 7 — Multi Provider AI
-
-Status: Planned
-
-Providers
-
-- Gemini
-- OpenAI
-- Anthropic
-- xAI
-- Local Models
-
----
-
-# Phase 8 — Team Collaboration
-
-Status: Planned
-
-Features
-
-- Organizations
-- Multiple Users
-- Permissions
-- Shared Brands
-- Shared Knowledge
-
----
-
-# Long Term Vision
-
-CreatorOS becomes a complete operating system for creators and businesses.
-
-Every brand has its own AI brain, memory, knowledge base, workflows, and autonomous AI agents working together.
+Production Division
+-> Creator Intelligence
+-> Analytics
+-> Publishing
+-> Growth Intelligence
+-> Multi-channel Portfolio Manager
