@@ -31,6 +31,17 @@ function digest(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
+function topLevelBoxes(bytes) {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const boxes = [];
+  for (let offset = 0; offset < bytes.byteLength;) {
+    const size = view.getUint32(offset);
+    boxes.push({ type: String.fromCharCode(...bytes.subarray(offset + 4, offset + 8)), bytes: bytes.slice(offset, offset + size) });
+    offset += size;
+  }
+  return boxes;
+}
+
 function durationRequest(durations, heartbeat) {
   const base = request("Duration", heartbeat);
   return {
@@ -61,7 +72,21 @@ test("mock MP4 output is byte deterministic and remains valid", { timeout: 60_00
   assert.deepEqual(first.bytes, second.bytes);
   assert.equal(digest(first.bytes), digest(second.bytes));
   assert.notEqual(digest(first.bytes), digest(different.bytes));
-  assert.deepEqual(validateMp4(first.bytes), { width: 480, height: 270, durationMs: 250 });
+  assert.deepEqual(validateMp4(first.bytes), { width: 480, height: 270, durationMs: 250, hasAudio: false, fastStart: false });
+});
+
+test("structural validation identifies fast-start ordering and rejects an invalid ftyp", { timeout: 60_000 }, async () => {
+  const rendered = await mockVideoProvider.render(request("Fast start structure"));
+  const boxes = topLevelBoxes(rendered.bytes);
+  const ordered = [...boxes.filter((box) => box.type === "ftyp"), ...boxes.filter((box) => box.type === "moov"),
+    ...boxes.filter((box) => box.type !== "ftyp" && box.type !== "moov")];
+  const fastStart = Buffer.concat(ordered.map((box) => Buffer.from(box.bytes)));
+  assert.equal(validateMp4(fastStart).fastStart, true);
+
+  const invalidFtyp = rendered.bytes.slice();
+  const ftyp = boxes[0];
+  invalidFtyp.fill("z".charCodeAt(0), 8, ftyp.bytes.byteLength);
+  assert.throws(() => validateMp4(invalidFtyp), /unsupported MP4 file type/);
 });
 
 test("mock rendering preserves abort behavior", async () => {

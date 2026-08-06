@@ -2,6 +2,7 @@ import "server-only";
 
 import { NextResponse } from "next/server";
 import { VideoProductionError } from "@/types/videoProduction";
+import { VideoProviderError } from "@/services/providers/video/videoProviderTypes";
 import type { CreatorVideoScene } from "@/types/videoProduction";
 import { parseVideoSceneRequest, VideoSceneRequestValidationError } from "@/services/video/videoSceneRequestPolicy";
 
@@ -66,6 +67,15 @@ export function requestChoice<T extends string>(body: Record<string, unknown>, f
 export function videoApiError(error: unknown): NextResponse {
   if (error instanceof VideoProductionError) {
     return NextResponse.json({ error: { code: error.code, message: error.message, retryable: error.retryable } }, { status: error.status });
+  }
+  if (error instanceof VideoProviderError) {
+    const status = error.code === "provider_disabled" ? 503
+      : error.code === "configuration_invalid" || error.code === "ffmpeg_unavailable" || error.code === "ffprobe_unavailable" ? 503
+        : error.code === "model_unavailable" || error.code === "provider_unsupported" ? 422
+          : error.code === "timeout" ? 504
+            : error.code === "cancelled" ? 408
+              : 500;
+    return NextResponse.json({ error: { code: error.code, message: error.message, retryable: error.retryable } }, { status });
   }
   return NextResponse.json({ error: { code: "internal_error", message: "Video production failed.", retryable: true } }, { status: 500 });
 }

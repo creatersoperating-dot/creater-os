@@ -6,6 +6,8 @@ export interface ValidatedMp4Metadata {
   durationMs: number;
   width: number;
   height: number;
+  hasAudio: boolean;
+  fastStart: boolean;
 }
 
 interface Box {
@@ -80,14 +82,14 @@ function trackDimensions(bytes: Uint8Array, tkhd: Box): { width: number; height:
   return { width, height };
 }
 
-function isVideoTrack(bytes: Uint8Array, trak: Box): boolean {
+function trackHandler(bytes: Uint8Array, trak: Box): string | null {
   const mdia = boxes(bytes, trak.dataStart, trak.end).find((box) => box.type === "mdia");
-  if (!mdia) return false;
+  if (!mdia) return null;
   const hdlr = boxes(bytes, mdia.dataStart, mdia.end).find((box) => box.type === "hdlr");
-  return Boolean(hdlr && hdlr.end - hdlr.dataStart >= 12 && boxType(bytes, hdlr.dataStart + 8) === "vide");
+  return hdlr && hdlr.end - hdlr.dataStart >= 12 ? boxType(bytes, hdlr.dataStart + 8) : null;
 }
 
-function hasAvcSampleEntry(bytes: Uint8Array, trak: Box): boolean {
+function hasSampleEntry(bytes: Uint8Array, trak: Box, expectedType: "avc1" | "mp4a"): boolean {
   const mdia = boxes(bytes, trak.dataStart, trak.end).find((box) => box.type === "mdia");
   if (!mdia) return false;
   const minf = boxes(bytes, mdia.dataStart, mdia.end).find((box) => box.type === "minf");
@@ -103,7 +105,7 @@ function hasAvcSampleEntry(bytes: Uint8Array, trak: Box): boolean {
     if (offset + 8 > stsd.end) return false;
     const size = data.getUint32(offset);
     if (size < 8 || offset + size > stsd.end) return false;
-    if (boxType(bytes, offset + 4) === "avc1") return true;
+    if (boxType(bytes, offset + 4) === expectedType) return true;
     offset += size;
   }
   return false;
@@ -138,14 +140,27 @@ export function validateMp4(bytes: Uint8Array): ValidatedMp4Metadata {
   const moov = top.find((box) => box.type === "moov");
   const mdat = top.find((box) => box.type === "mdat");
   if (!ftyp || !moov || !mdat || mdat.end <= mdat.dataStart) throw new VideoProviderError("invalid_render", "The video renderer returned an invalid MP4 container.");
+  const ftypBytes = ftyp.end - ftyp.dataStart;
+  if (ftypBytes < 8 || (ftypBytes - 8) % 4 !== 0) {
+    throw new VideoProviderError("invalid_render", "The video renderer returned malformed MP4 file-type metadata.");
+  }
+  const brands = [boxType(bytes, ftyp.dataStart)];
+  for (let offset = ftyp.dataStart + 8; offset < ftyp.end; offset += 4) brands.push(boxType(bytes, offset));
+  if (!brands.some((brand) => ["isom", "iso2", "iso4", "iso5", "iso6", "mp41", "mp42", "avc1", "M4V "].includes(brand))) {
+    throw new VideoProviderError("invalid_render", "The video renderer returned an unsupported MP4 file type.");
+  }
   const movieBoxes = boxes(bytes, moov.dataStart, moov.end);
   const mvhd = movieBoxes.find((box) => box.type === "mvhd");
   if (!mvhd) throw new VideoProviderError("invalid_render", "The video renderer returned MP4 metadata without a movie header.");
-  const videoTrack = movieBoxes.filter((box) => box.type === "trak").find((track) => isVideoTrack(bytes, track));
-  if (!videoTrack || !hasAvcSampleEntry(bytes, videoTrack)) throw new VideoProviderError("invalid_render", "The video renderer returned an MP4 without an H.264 video track.");
+  const tracks = movieBoxes.filter((box) => box.type === "trak");
+  const videoTrack = tracks.find((track) => trackHandler(bytes, track) === "vide");
+  if (!videoTrack || !hasSampleEntry(bytes, videoTrack, "avc1")) throw new VideoProviderError("invalid_render", "The video renderer returned an MP4 without an H.264 video track.");
+  const audioTracks = tracks.filter((track) => trackHandler(bytes, track) === "soun");
+  const hasAudio = audioTracks.some((track) => hasSampleEntry(bytes, track, "mp4a"));
+  if (audioTracks.length > 0 && !hasAudio) throw new VideoProviderError("invalid_render", "The video renderer returned an MP4 with an unsupported audio track.");
   const tkhd = boxes(bytes, videoTrack.dataStart, videoTrack.end).find((box) => box.type === "tkhd");
   if (!tkhd) throw new VideoProviderError("invalid_render", "The video renderer returned MP4 metadata without video dimensions.");
-  return { durationMs: movieDuration(bytes, mvhd), ...trackDimensions(bytes, tkhd) };
+  return { durationMs: movieDuration(bytes, mvhd), ...trackDimensions(bytes, tkhd), hasAudio, fastStart: moov.start < mdat.start };
 }
 
 export function normalizeMp4Timestamps(bytes: Uint8Array): Uint8Array {

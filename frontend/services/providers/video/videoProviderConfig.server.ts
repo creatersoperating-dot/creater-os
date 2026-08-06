@@ -1,10 +1,12 @@
 import "server-only";
 
+import path from "node:path";
+
 import { VideoProviderError } from "./videoProviderTypes";
 
 export interface VideoProviderConfiguration {
-  provider: "mock" | "disabled"; model: string; fallbackProvider: "none"; timeoutMs: number;
-  activeLeaseMs: number; heartbeatMs: number;
+  provider: "mock" | "ffmpeg" | "disabled"; model: string; fallbackProvider: "none"; timeoutMs: number;
+  activeLeaseMs: number; heartbeatMs: number; ffmpegPath: string | null; ffprobePath: string | null;
 }
 function boundedMilliseconds(name: string, fallback: number, minimum: number, maximum: number): number {
   const parsed = Number(process.env[name] ?? String(fallback));
@@ -15,8 +17,8 @@ function boundedMilliseconds(name: string, fallback: number, minimum: number, ma
 }
 export function getVideoProviderConfiguration(): VideoProviderConfiguration {
   const rawProvider = (process.env.CREATOROS_VIDEO_PROVIDER ?? (process.env.NODE_ENV === "development" ? "mock" : "disabled")).trim().toLowerCase();
-  if (rawProvider !== "mock" && rawProvider !== "disabled") {
-    throw new VideoProviderError("configuration_invalid", "The configured video provider is unsupported.");
+  if (rawProvider !== "mock" && rawProvider !== "ffmpeg" && rawProvider !== "disabled") {
+    throw new VideoProviderError("provider_unsupported", "The configured video provider is unsupported.");
   }
   if (rawProvider === "mock" && process.env.NODE_ENV === "production") {
     throw new VideoProviderError("mock_forbidden", "The development video renderer is unavailable in production.");
@@ -29,5 +31,30 @@ export function getVideoProviderConfiguration(): VideoProviderConfiguration {
   if (activeLeaseMs < heartbeatMs * 3) {
     throw new VideoProviderError("configuration_invalid", "The video operation lease must be at least three heartbeat intervals.");
   }
-  return { provider: rawProvider, model: (process.env.CREATOROS_VIDEO_MODEL ?? (rawProvider === "mock" ? "mock-render-v1" : "disabled")).trim(), fallbackProvider: "none", timeoutMs, activeLeaseMs, heartbeatMs };
+  const defaultModel = rawProvider === "mock" ? "mock-render-v1" : rawProvider === "ffmpeg" ? "ffmpeg-h264-aac-v1" : "disabled";
+  const model = (process.env.CREATOROS_VIDEO_MODEL ?? defaultModel).trim();
+  let ffmpegPath: string | null = null;
+  let ffprobePath: string | null = null;
+  if (rawProvider === "ffmpeg") {
+    if (model !== "ffmpeg-h264-aac-v1") {
+      throw new VideoProviderError("model_unavailable", "The configured FFmpeg video model is unsupported.");
+    }
+    const configuredPath = (process.env.CREATOROS_FFMPEG_PATH ?? "").trim();
+    if (!configuredPath) {
+      throw new VideoProviderError("configuration_invalid", "CREATOROS_FFMPEG_PATH is required for the FFmpeg video provider.");
+    }
+    if (configuredPath.includes("\0") || !path.isAbsolute(configuredPath)) {
+      throw new VideoProviderError("configuration_invalid", "CREATOROS_FFMPEG_PATH must be an absolute executable path.");
+    }
+    const configuredProbePath = (process.env.CREATOROS_FFPROBE_PATH ?? "").trim();
+    if (!configuredProbePath) {
+      throw new VideoProviderError("configuration_invalid", "CREATOROS_FFPROBE_PATH is required for the FFmpeg video provider.");
+    }
+    if (configuredProbePath.includes("\0") || !path.isAbsolute(configuredProbePath)) {
+      throw new VideoProviderError("configuration_invalid", "CREATOROS_FFPROBE_PATH must be an absolute executable path.");
+    }
+    ffmpegPath = configuredPath;
+    ffprobePath = configuredProbePath;
+  }
+  return { provider: rawProvider, model, fallbackProvider: "none", timeoutMs, activeLeaseMs, heartbeatMs, ffmpegPath, ffprobePath };
 }

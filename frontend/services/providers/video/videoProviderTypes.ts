@@ -1,7 +1,7 @@
 import "server-only";
 
 export interface VideoProviderDescriptor {
-  id: "mock";
+  id: "mock" | "ffmpeg";
   label: string;
   developmentOnly: boolean;
   capabilities: VideoProviderCapabilities;
@@ -26,9 +26,16 @@ export interface VideoRenderSceneInput {
 export interface VideoRenderAudioInput {
   generationId: string; durationMs: number; mimeType: string; bytes: Uint8Array;
 }
+export type VideoVisualAssetFormat = "svg" | "png" | "jpeg";
+export type VideoVisualAssetMimeType = "image/svg+xml" | "image/png" | "image/jpeg";
+export interface VideoRenderVisualAssetInput {
+  sceneId: string; sceneNumber: number; bytes: Uint8Array; format: VideoVisualAssetFormat;
+  mimeType: VideoVisualAssetMimeType; width: number; height: number;
+}
 export interface VideoRenderRequest {
   projectId: string; projectTitle: string; model: string;
   scenes: readonly VideoRenderSceneInput[]; audio: VideoRenderAudioInput; signal?: AbortSignal;
+  visualAssets?: readonly VideoRenderVisualAssetInput[];
   heartbeat?: () => Promise<void>;
 }
 export interface VideoVisualAssetResult {

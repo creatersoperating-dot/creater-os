@@ -6,12 +6,18 @@ import { createClient } from "@/lib/supabase/server";
 import type { AudioGenerationRow } from "@/services/audioProductionMapper";
 import { mapScriptRowToScript, type ScriptRow } from "@/services/scriptMapper";
 import { validateMp4 } from "@/services/video/mp4Validation.server";
+import { assertAuthoritativeNarrationSize } from "@/services/video/audioRenderInputPolicy.server";
 import { isExactAuthoritativeAssetSet } from "@/services/video/videoAssetSetPolicy";
 import { CREATOROS_MAX_VIDEO_DURATION_MS, evaluateVideoDurationEligibility, isCompletedVideoDurationValid } from "@/services/video/videoDurationContract";
 import { buildDeterministicScenes } from "@/services/video/videoScenePlanning.server";
 import { canonicalVideoSceneSource } from "@/services/video/videoSceneSourceHash";
 import { removePrivateStorageObject } from "@/services/video/videoStorageCleanup.server";
-import { VideoProviderError, type ConfiguredVideoRenderer } from "@/services/providers/video/videoProviderTypes";
+import {
+  VideoProviderError,
+  type ConfiguredVideoRenderer,
+  type VideoRenderRequest,
+  type VideoRenderVisualAssetInput,
+} from "@/services/providers/video/videoProviderTypes";
 import {
   mapVideoGeneration,
   mapVideoScenePlan,
@@ -207,16 +213,20 @@ export class VideoProductionService {
   }
 
   private async objectContentMatches(path: string, expectedSize: number, expectedMime: string, expectedHash: string, signal?: AbortSignal): Promise<boolean> {
-    if (!await this.objectMatches(path, expectedSize, expectedMime, signal)) return false;
-    const { data, error } = await this.db.storage.from(BUCKET).download(path);
-    throwIfAborted(signal);
-    if (error || !data) return false;
-    const bytes = new Uint8Array(await data.arrayBuffer());
-    throwIfAborted(signal);
-    return bytes.byteLength === expectedSize && hash(bytes) === expectedHash;
+    return Boolean(await this.readMatchingObject(path, expectedSize, expectedMime, expectedHash, signal));
   }
 
-  private async validateExactAssetSet(generation: VideoGenerationRow, plan: CreatorVideoScenePlan, signal?: AbortSignal): Promise<void> {
+  private async readMatchingObject(path: string, expectedSize: number, expectedMime: string, expectedHash: string, signal?: AbortSignal): Promise<Uint8Array | null> {
+    if (!await this.objectMatches(path, expectedSize, expectedMime, signal)) return null;
+    const { data, error } = await this.db.storage.from(BUCKET).download(path);
+    throwIfAborted(signal);
+    if (error || !data) return null;
+    const bytes = new Uint8Array(await data.arrayBuffer());
+    throwIfAborted(signal);
+    return bytes.byteLength === expectedSize && hash(bytes) === expectedHash ? bytes : null;
+  }
+
+  private async validateExactAssetSet(generation: VideoGenerationRow, plan: CreatorVideoScenePlan, signal?: AbortSignal): Promise<readonly VideoRenderVisualAssetInput[]> {
     throwIfAborted(signal);
     const { data, error } = await this.db.from("video_visual_assets").select("*")
       .eq("user_id", this.userId).eq("brand_id", generation.brand_id).eq("project_id", generation.project_id)
@@ -229,22 +239,34 @@ export class VideoProductionService {
     }
     const scenes = plan.scenes.map((scene) => ({ sceneId: scene.id, sceneNumber: scene.sceneNumber,
       sourceHash: hash(canonicalVideoSceneSource(scene)) }));
-    const candidates = await Promise.all(assets.map(async (asset) => {
+    const validated = await Promise.all(assets.map(async (asset) => {
       const scene = plan.scenes.find((entry) => entry.id === asset.scene_id && entry.sceneNumber === asset.scene_number);
       const expectedPath = sceneStoragePath(this.userId, generation.brand_id, generation.project_id, generation.id, asset.scene_number);
       const metadataValid = Boolean(scene && asset.format === "svg" && asset.mime_type === "image/svg+xml"
         && asset.file_size_bytes && asset.content_sha256 && /^[0-9a-f]{64}$/.test(asset.content_sha256)
         && Number.isInteger(asset.width) && Number.isInteger(asset.height) && Number(asset.width) > 0 && Number(asset.height) > 0
         && asset.storage_bucket === BUCKET && asset.storage_path === expectedPath);
-      const objectValid = metadataValid && asset.file_size_bytes && asset.mime_type && asset.content_sha256
-        ? await this.objectContentMatches(expectedPath, asset.file_size_bytes, asset.mime_type, asset.content_sha256, signal) : false;
-      return { sceneId: asset.scene_id, sceneNumber: asset.scene_number, planId: asset.scene_plan_id,
-        planVersion: asset.source_scene_plan_version, sourceHash: asset.source_scene_sha256,
-        ready: asset.status === "ready", metadataValid, objectValid };
+      const bytes = metadataValid && asset.file_size_bytes && asset.mime_type && asset.content_sha256
+        ? await this.readMatchingObject(expectedPath, asset.file_size_bytes, asset.mime_type, asset.content_sha256, signal) : null;
+      return {
+        candidate: { sceneId: asset.scene_id, sceneNumber: asset.scene_number, planId: asset.scene_plan_id,
+          planVersion: asset.source_scene_plan_version, sourceHash: asset.source_scene_sha256,
+          ready: asset.status === "ready", metadataValid, objectValid: Boolean(bytes) },
+        renderAsset: bytes && asset.width && asset.height ? {
+          sceneId: asset.scene_id, sceneNumber: asset.scene_number, bytes, format: "svg" as const,
+          mimeType: "image/svg+xml" as const, width: asset.width, height: asset.height,
+        } : null,
+      };
     }));
-    if (!isExactAuthoritativeAssetSet(scenes, candidates, plan.id, plan.version)) {
+    if (!isExactAuthoritativeAssetSet(scenes, validated.map((item) => item.candidate), plan.id, plan.version)) {
       throw new VideoProductionError("asset_set_invalid", "The scene visual set failed integrity validation.", false, 409);
     }
+    return plan.scenes.map((scene) => {
+      const asset = validated.find((item) => item.renderAsset?.sceneId === scene.id
+        && item.renderAsset.sceneNumber === scene.sceneNumber)?.renderAsset;
+      if (!asset) throw new VideoProductionError("asset_set_invalid", "The scene visual set failed integrity validation.", false, 409);
+      return asset;
+    });
   }
 
   private retryMatches(row: VideoGenerationRow, context: Context, plan: CreatorVideoScenePlan, planHash: string): boolean {
@@ -411,11 +433,12 @@ export class VideoProductionService {
       throwIfAborted(signal);
       if (audioError || !audioBlob) throw new VideoProductionError("audio_download_failed", "The attached narration could not be read.", true, 500);
       const audioBytes = new Uint8Array(await audioBlob.arrayBuffer());
+      assertAuthoritativeNarrationSize(audioBytes, context.audio.file_size_bytes);
       await heartbeat();
       assertHeartbeat();
-      const renderRequest = { projectId, projectTitle: context.project.title, model, scenes: plan.scenes,
+      let renderRequest: VideoRenderRequest = { projectId, projectTitle: context.project.title, model, scenes: plan.scenes,
         audio: { generationId: context.audio.id, durationMs: Number(context.audio.duration_ms), mimeType: "audio/wav", bytes: audioBytes },
-        heartbeat: () => heartbeat(), signal } as const;
+        heartbeat: () => heartbeat(), signal };
 
       const { data: assetStage, error: assetStageError } = await this.db.rpc("advance_video_generation_stage", {
         p_generation_id: generation.id, p_expected_status: "planning", p_next_status: "generating_assets",
@@ -492,7 +515,8 @@ export class VideoProductionService {
         }
       }
 
-      await this.validateExactAssetSet(generation, plan, signal);
+      const authoritativeVisualAssets = await this.validateExactAssetSet(generation, plan, signal);
+      renderRequest = { ...renderRequest, visualAssets: authoritativeVisualAssets };
       await heartbeat();
       assertHeartbeat();
 
@@ -507,6 +531,8 @@ export class VideoProductionService {
       if (result.bytes.byteLength > MAX_BYTES || result.mimeType !== "video/mp4" || result.format !== "mp4") throw new VideoProviderError("invalid_render", "The video renderer returned an invalid video.");
       const metadata = validateMp4(result.bytes);
       if (metadata.durationMs !== Math.round(result.durationMs) || metadata.width !== result.width || metadata.height !== result.height
+        || metadata.hasAudio !== result.hasAudio || (adapter.descriptor.capabilities.supportsAudioMux && !metadata.hasAudio)
+        || (adapter.descriptor.capabilities.supportsAudioMux && !metadata.fastStart)
         || !isCompletedVideoDurationValid(plannedDurationMs, metadata.durationMs)) {
         throw new VideoProviderError("invalid_render", "The video renderer returned inconsistent video metadata.");
       }
@@ -640,7 +666,11 @@ export class VideoProductionService {
     }
     const bytes = new Uint8Array(await blob.arrayBuffer());
     const metadata = validateMp4(bytes);
-    if (bytes.byteLength !== row.file_size_bytes || hash(bytes) !== row.content_sha256 || metadata.durationMs !== row.duration_ms || metadata.width !== row.width || metadata.height !== row.height) throw new VideoProductionError("integrity_failed", "The ready video failed integrity validation.", false, 409);
+    if (bytes.byteLength !== row.file_size_bytes || hash(bytes) !== row.content_sha256 || metadata.durationMs !== row.duration_ms
+      || metadata.width !== row.width || metadata.height !== row.height || metadata.hasAudio !== row.has_audio
+      || (row.provider === "ffmpeg" && !metadata.fastStart)) {
+      throw new VideoProductionError("integrity_failed", "The ready video failed integrity validation.", false, 409);
+    }
     const filename = `creatoros-video-${generationId.slice(0, 8)}.mp4`;
     const { data: signed, error: signedError } = await this.db.storage.from(BUCKET).createSignedUrl(path, 300, purpose === "download" ? { download: filename } : undefined);
     if (signedError || !signed?.signedUrl) throw new VideoProductionError("access_failed", "Secure video access could not be created.", true, 500);
