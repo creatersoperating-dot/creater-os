@@ -3,7 +3,7 @@ const { createHash } = require("node:crypto");
 const assert = require("node:assert/strict");
 const test = require("node:test");
 
-const { mockVideoProvider } = require("../providers/video/mockVideoProvider.server.ts");
+const { mockVideoRenderer, mockVisualAssetProvider } = require("../providers/video/mockVideoProvider.server.ts");
 const { validateMp4 } = require("./mp4Validation.server.ts");
 const { buildDeterministicScenes } = require("./videoScenePlanning.server.ts");
 
@@ -29,6 +29,15 @@ function request(title, heartbeat) {
 
 function digest(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
+}
+
+async function renderRequest(title, heartbeat) {
+  const base = request(title, heartbeat);
+  const visualAssets = await mockVisualAssetProvider.generateVisualAssets({
+    projectId: base.projectId, projectTitle: base.projectTitle, model: "mock-visual-v1",
+    scenes: base.scenes, heartbeat,
+  });
+  return { ...base, visualAssets };
 }
 
 function topLevelBoxes(bytes) {
@@ -58,7 +67,8 @@ function durationRequest(durations, heartbeat) {
 
 test("mock visual preparation is separate and heartbeat-aware", async () => {
   let heartbeats = 0;
-  const assets = await mockVideoProvider.generateVisualAssets(request("Assets", async () => { heartbeats += 1; }));
+  const base = request("Assets", async () => { heartbeats += 1; });
+  const assets = await mockVisualAssetProvider.generateVisualAssets({ ...base, model: "mock-visual-v1" });
   assert.equal(heartbeats, 1);
   assert.equal(assets.length, 1);
   assert.equal(assets[0].sceneId, "11111111-1111-4111-8111-111111111111");
@@ -66,9 +76,9 @@ test("mock visual preparation is separate and heartbeat-aware", async () => {
 });
 
 test("mock MP4 output is byte deterministic and remains valid", { timeout: 60_000 }, async () => {
-  const first = await mockVideoProvider.render(request("Same input"));
-  const second = await mockVideoProvider.render(request("Same input"));
-  const different = await mockVideoProvider.render(request("Different input"));
+  const first = await mockVideoRenderer.render(await renderRequest("Same input"));
+  const second = await mockVideoRenderer.render(await renderRequest("Same input"));
+  const different = await mockVideoRenderer.render(await renderRequest("Different input"));
   assert.deepEqual(first.bytes, second.bytes);
   assert.equal(digest(first.bytes), digest(second.bytes));
   assert.notEqual(digest(first.bytes), digest(different.bytes));
@@ -76,7 +86,7 @@ test("mock MP4 output is byte deterministic and remains valid", { timeout: 60_00
 });
 
 test("structural validation identifies fast-start ordering and rejects an invalid ftyp", { timeout: 60_000 }, async () => {
-  const rendered = await mockVideoProvider.render(request("Fast start structure"));
+  const rendered = await mockVideoRenderer.render(await renderRequest("Fast start structure"));
   const boxes = topLevelBoxes(rendered.bytes);
   const ordered = [...boxes.filter((box) => box.type === "ftyp"), ...boxes.filter((box) => box.type === "moov"),
     ...boxes.filter((box) => box.type !== "ftyp" && box.type !== "moov")];
@@ -91,22 +101,26 @@ test("structural validation identifies fast-start ordering and rejects an invali
 
 test("mock rendering preserves abort behavior", async () => {
   const controller = new AbortController();
+  const render = await renderRequest("Abort");
   controller.abort();
-  await assert.rejects(mockVideoProvider.render({ ...request("Abort"), signal: controller.signal }), /cancelled/i);
+  await assert.rejects(mockVideoRenderer.render({ ...render, signal: controller.signal }), /cancelled/i);
 });
 
 test("mock duration limit is checked before visual work or frame allocation", async () => {
-  assert.equal(mockVideoProvider.descriptor.capabilities.maximumDurationMs, 300_000);
-  assert.equal(mockVideoProvider.descriptor.capabilities.maximumDurationMs * 4 / 1000, 1_200);
+  assert.equal(mockVideoRenderer.descriptor.capabilities.maximumDurationMs, 300_000);
+  assert.equal(mockVideoRenderer.descriptor.capabilities.maximumDurationMs * 4 / 1000, 1_200);
   let heartbeats = 0;
-  const exact = await mockVideoProvider.generateVisualAssets(durationRequest([100_000, 100_000, 100_000], async () => { heartbeats += 1; }));
+  const exactRequest = durationRequest([100_000, 100_000, 100_000], async () => { heartbeats += 1; });
+  const exact = await mockVisualAssetProvider.generateVisualAssets({ ...exactRequest, model: "mock-visual-v1" });
   assert.equal(exact.length, 3);
   assert.equal(heartbeats, 1);
+  const tooLong = durationRequest([120_000, 120_000, 60_001], async () => { heartbeats += 1; });
+  const tooLongAssets = await mockVisualAssetProvider.generateVisualAssets({ ...tooLong, model: "mock-visual-v1" });
   await assert.rejects(
-    mockVideoProvider.generateVisualAssets(durationRequest([120_000, 120_000, 60_001], async () => { heartbeats += 1; })),
+    mockVideoRenderer.render({ ...tooLong, visualAssets: tooLongAssets }),
     /up to five minutes/,
   );
-  assert.equal(heartbeats, 1);
+  assert.equal(heartbeats, 2);
 });
 
 test("30-minute deterministic planning stays within bounded scene allocation", () => {

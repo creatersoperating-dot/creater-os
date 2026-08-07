@@ -1,9 +1,17 @@
 import "server-only";
 
+import { createHash } from "node:crypto";
+
 import * as HME from "h264-mp4-encoder";
 import sharp from "sharp";
 
-import type { VideoProviderAdapter, VideoRenderRequest, VideoVisualAssetResult } from "./videoProviderTypes";
+import type {
+  VideoRenderRequest,
+  VideoRendererAdapter,
+  VideoVisualAssetResult,
+  VisualAssetGenerationRequest,
+  VisualAssetProviderAdapter,
+} from "./videoProviderTypes";
 import { VideoProviderError } from "./videoProviderTypes";
 import { allocateFrameCountsForDurations, MOCK_VIDEO_FRAME_RATE } from "@/services/video/videoScenePlanning.server";
 import { normalizeMp4Timestamps } from "@/services/video/mp4Validation.server";
@@ -22,7 +30,16 @@ function clipped(value: string, maximum: number): string {
   const compact = value.replace(/\s+/g, " ").trim();
   return compact.length <= maximum ? compact : `${compact.slice(0, maximum - 1)}…`;
 }
-function assertRequest(request: VideoRenderRequest): void {
+function assertVisualRequest(request: VisualAssetGenerationRequest): void {
+  if (process.env.NODE_ENV === "production") throw new VideoProviderError("mock_forbidden", "The development visual provider is unavailable in production.");
+  if (request.model !== "mock-visual-v1") throw new VideoProviderError("model_unavailable", "The configured visual model is unavailable.");
+  if (!request.projectId.trim() || request.scenes.length < 1 || request.scenes.length > 24
+    || request.scenes.some((scene, index) => scene.sceneNumber !== index + 1 || !scene.id.trim() || !scene.visualPrompt.trim())) {
+    throw new VideoProviderError("invalid_request", "The visual generation request is invalid.");
+  }
+  throwIfAborted(request.signal);
+}
+function assertRenderRequest(request: VideoRenderRequest): void {
   if (process.env.NODE_ENV === "production") throw new VideoProviderError("mock_forbidden", "The development video renderer is unavailable in production.");
   if (request.model !== "mock-render-v1") throw new VideoProviderError("model_unavailable", "The configured video renderer is unavailable.");
   if (!request.projectId.trim() || request.scenes.length < 1 || request.scenes.length > 24) throw new VideoProviderError("invalid_request", "The video render request is invalid.");
@@ -31,6 +48,15 @@ function assertRequest(request: VideoRenderRequest): void {
   if (!Number.isSafeInteger(plannedDurationMs) || plannedDurationMs < 1 || plannedDurationMs > MOCK_MAX_VIDEO_DURATION_MS) {
     throw new VideoProviderError("duration_unsupported", "The mock renderer supports videos up to five minutes.");
   }
+  if (!request.visualAssets || request.visualAssets.length !== request.scenes.length
+    || request.visualAssets.some((asset, index) => {
+      const scene = request.scenes[index];
+      const typeMatches = (asset.format === "svg" && asset.mimeType === "image/svg+xml")
+        || (asset.format === "png" && asset.mimeType === "image/png")
+        || (asset.format === "jpeg" && asset.mimeType === "image/jpeg");
+      return asset.sceneId !== scene.id || asset.sceneNumber !== scene.sceneNumber || asset.bytes.byteLength < 1
+        || !typeMatches || asset.width < 1 || asset.height < 1;
+    })) throw new VideoProviderError("invalid_asset_set", "The authoritative scene visual set is invalid or out of order.");
   throwIfAborted(request.signal);
 }
 function throwIfAborted(signal?: AbortSignal): void {
@@ -54,38 +80,46 @@ function blendFrames(previous: Uint8Array, current: Uint8Array, ratio: number): 
   }
   return blended;
 }
-function makeSvg(request: VideoRenderRequest, index: number): string {
+function makeSvg(request: VisualAssetGenerationRequest, index: number): string {
   const scene = request.scenes[index];
   const hue = (scene.sceneNumber * 53 + 211) % 360;
   const excerpt = clipped(scene.narrationText || scene.visualPrompt, 110);
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${WIDTH}" height="${HEIGHT}" viewBox="0 0 ${WIDTH} ${HEIGHT}"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop stop-color="hsl(${hue} 78% 32%)"/><stop offset="1" stop-color="hsl(${(hue + 72) % 360} 75% 12%)"/></linearGradient></defs><rect width="480" height="270" fill="url(#g)"/><circle cx="430" cy="45" r="75" fill="white" opacity=".08"/><text x="28" y="38" font-family="Arial,sans-serif" font-size="12" fill="white" opacity=".78">CREATOROS MOCK VIDEO · SCENE ${scene.sceneNumber}/${request.scenes.length}</text><text x="28" y="100" font-family="Arial,sans-serif" font-weight="700" font-size="27" fill="white">${escapeXml(clipped(scene.title, 31))}</text><foreignObject x="28" y="120" width="410" height="92"><div xmlns="http://www.w3.org/1999/xhtml" style="font:16px/1.45 Arial,sans-serif;color:white;opacity:.9">${escapeXml(excerpt)}</div></foreignObject><text x="28" y="246" font-family="Arial,sans-serif" font-size="11" fill="white" opacity=".7">${escapeXml(clipped(request.projectTitle, 48))} · ${escapeXml(scene.visualType)}</text></svg>`;
 }
 
-function visualAssets(request: VideoRenderRequest): VideoVisualAssetResult[] {
+function visualAssets(request: VisualAssetGenerationRequest): VideoVisualAssetResult[] {
   return request.scenes.map((_, index) => {
     const svg = makeSvg(request, index);
+    const bytes = encoder.encode(svg);
     return { sceneId: request.scenes[index].id, sceneNumber: request.scenes[index].sceneNumber,
-      bytes: encoder.encode(svg), format: "svg", mimeType: "image/svg+xml", width: WIDTH, height: HEIGHT };
+      bytes, format: "svg", mimeType: "image/svg+xml", width: WIDTH, height: HEIGHT,
+      contentSha256: createHash("sha256").update(bytes).digest("hex") };
   });
 }
 
-export const mockVideoProvider: VideoProviderAdapter = {
-  descriptor: { id: "mock", label: "CreatorOS development renderer", developmentOnly: true,
-    capabilities: { containers: ["mp4"], supportsAudioMux: false, maximumDurationMs: MOCK_MAX_VIDEO_DURATION_MS, maximumScenes: 24 } },
+export const mockVisualAssetProvider: VisualAssetProviderAdapter = {
+  descriptor: { id: "mock", label: "CreatorOS development visual provider", developmentOnly: true,
+    capabilities: { formats: ["svg"], maximumScenes: 24, maximumBytesPerAsset: 2 * 1024 * 1024, maximumTotalBytes: 24 * 2 * 1024 * 1024 } },
   async generateVisualAssets(request) {
-    assertRequest(request);
+    assertVisualRequest(request);
     await request.heartbeat?.();
     throwIfAborted(request.signal);
     return visualAssets(request);
   },
+};
+
+export const mockVideoRenderer: VideoRendererAdapter = {
+  descriptor: { id: "mock", label: "CreatorOS development renderer", developmentOnly: true,
+    capabilities: { containers: ["mp4"], supportsAudioMux: false, maximumDurationMs: MOCK_MAX_VIDEO_DURATION_MS, maximumScenes: 24 } },
   async render(request) {
-    assertRequest(request);
+    assertRenderRequest(request);
     const frameCounts = allocateFrameCountsForDurations(request.scenes.map((scene) => scene.durationMs));
     const totalFrames = frameCounts.reduce((sum, count) => sum + count, 0);
     const encodedDurationMs = totalFrames * 1000 / FRAME_RATE;
     if (encodedDurationMs > MOCK_MAX_VIDEO_DURATION_MS) throw new VideoProviderError("duration_unsupported", "The mock renderer supports videos up to five minutes.");
-    const svgs = request.scenes.map((_, index) => makeSvg(request, index));
-    const frames = await Promise.all(svgs.map(async (svg) => new Uint8Array(await sharp(Buffer.from(svg)).ensureAlpha().raw().toBuffer())));
+    const frames = await Promise.all(request.visualAssets!.map(async (asset) => new Uint8Array(await sharp(Buffer.from(asset.bytes))
+      .resize(WIDTH, HEIGHT, { fit: "contain", background: { r: 0, g: 0, b: 0, alpha: 1 } })
+      .ensureAlpha().raw().toBuffer())));
     throwIfAborted(request.signal);
     const mp4 = await HME.createH264MP4Encoder();
     try {

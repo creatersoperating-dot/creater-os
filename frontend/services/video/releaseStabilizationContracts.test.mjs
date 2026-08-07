@@ -34,10 +34,10 @@ test("migration 008 enforces exact assets before ready and attachment", async ()
 
 test("service validates authoritative assets before render and again before ready", async () => {
   const source = await readFile(servicePath, "utf8");
-  const prepare = source.indexOf("adapter.generateVisualAssets(renderRequest)");
-  const firstValidation = source.indexOf("this.validateExactAssetSet(generation, plan, signal)", prepare);
-  const render = source.indexOf("adapter.render(renderRequest)");
-  const secondValidation = source.indexOf("this.validateExactAssetSet(generation, plan, signal)", render);
+  const prepare = source.indexOf("visualAdapter.generateVisualAssets({");
+  const firstValidation = source.indexOf("this.validateExactAssetSet(", prepare);
+  const render = source.indexOf("rendererAdapter.render(renderRequest)");
+  const secondValidation = source.indexOf("this.validateExactAssetSet(", render);
   const ready = source.indexOf('this.db.rpc("complete_video_generation"', render);
   assert.ok(prepare >= 0 && prepare < firstValidation && firstValidation < render);
   assert.ok(render < secondValidation && secondValidation < ready);

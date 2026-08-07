@@ -3,7 +3,7 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 
 const { getVideoProviderConfiguration } = require("./videoProviderConfig.server.ts");
-const { getConfiguredVideoProvider } = require("./videoProviderRegistry.server.ts");
+const { getConfiguredVideoRenderer } = require("./videoProviderRegistry.server.ts");
 
 const keys = [
   "NODE_ENV", "CREATOROS_VIDEO_PROVIDER", "CREATOROS_VIDEO_MODEL",
@@ -69,7 +69,7 @@ test("registry selects mock and ffmpeg without falling back, and preserves disab
   const executablePath = process.platform === "win32" ? "C:\\tools\\ffmpeg.exe" : "/usr/bin/ffmpeg";
   const probePath = process.platform === "win32" ? "C:\\tools\\ffprobe.exe" : "/usr/bin/ffprobe";
   await configured({ CREATOROS_VIDEO_PROVIDER: "mock", CREATOROS_VIDEO_MODEL: "mock-render-v1" }, async () => {
-    const configuredProvider = await getConfiguredVideoProvider();
+    const configuredProvider = await getConfiguredVideoRenderer();
     assert.equal(configuredProvider.adapter.descriptor.id, "mock");
   });
   await configured({
@@ -78,11 +78,11 @@ test("registry selects mock and ffmpeg without falling back, and preserves disab
     CREATOROS_FFMPEG_PATH: executablePath,
     CREATOROS_FFPROBE_PATH: probePath,
   }, async () => {
-    const configuredProvider = await getConfiguredVideoProvider();
+    const configuredProvider = await getConfiguredVideoRenderer();
     assert.equal(configuredProvider.adapter.descriptor.id, "ffmpeg");
     assert.equal(configuredProvider.adapter.descriptor.capabilities.supportsAudioMux, true);
   });
   await configured({ CREATOROS_VIDEO_PROVIDER: "disabled", CREATOROS_VIDEO_MODEL: "disabled" }, async () => {
-    await assert.rejects(getConfiguredVideoProvider(), /not configured/);
+    await assert.rejects(getConfiguredVideoRenderer(), /not configured/);
   });
 });

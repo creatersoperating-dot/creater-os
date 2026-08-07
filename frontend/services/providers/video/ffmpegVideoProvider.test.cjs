@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 const { access, readFile, rm, writeFile } = require("node:fs/promises");
 const path = require("node:path");
 const test = require("node:test");
+const sharp = require("sharp");
 
 const { assemblePcmChunksToWav } = require("../../audio/wavAssembly.server.ts");
 const {
@@ -166,6 +167,29 @@ test("out-of-order or corrupt authoritative visuals fail deterministically befor
   corrupt.visualAssets[0].bytes = new Uint8Array([1, 2, 3]);
   await assert.rejects(provider.render(corrupt), (error) => error.code === "invalid_asset" && error.retryable === false);
   assert.equal(executed, false);
+});
+
+test("normalized PNG authoritative visuals remain compatible with FFmpeg frame preparation", async () => {
+  const png = new Uint8Array(await sharp({ create: {
+    width: 1280, height: 720, channels: 3, background: { r: 12, g: 34, b: 56 },
+  } }).png().toBuffer());
+  let prepared;
+  const provider = createFfmpegVideoProvider(providerOptions(1_250, {
+    runProcess: async (received) => {
+      prepared = await sharp(path.join(received.cwd, "scene-0001.png")).metadata();
+      await writeFile(path.join(received.cwd, "render.mp4"), new Uint8Array([1]));
+      return processResult;
+    },
+  }));
+  const renderRequest = request();
+  renderRequest.visualAssets = renderRequest.scenes.map((scene) => ({
+    sceneId: scene.id, sceneNumber: scene.sceneNumber, bytes: png,
+    format: "png", mimeType: "image/png", width: 1280, height: 720,
+  }));
+  await provider.render(renderRequest);
+  assert.equal(prepared.format, "png");
+  assert.equal(prepared.width, 1280);
+  assert.equal(prepared.height, 720);
 });
 
 test("temporary files are removed after success and cleanup failure overrides success", async () => {

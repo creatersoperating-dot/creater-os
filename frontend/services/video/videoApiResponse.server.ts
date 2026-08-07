@@ -70,9 +70,11 @@ export function videoApiError(error: unknown): NextResponse {
   }
   if (error instanceof VideoProviderError) {
     const status = error.code === "provider_disabled" ? 503
-      : error.code === "configuration_invalid" || error.code === "ffmpeg_unavailable" || error.code === "ffprobe_unavailable" ? 503
+      : error.code === "configuration_invalid" || error.code === "ffmpeg_unavailable" || error.code === "ffprobe_unavailable"
+        || error.code === "visual_provider_unavailable" ? 503
         : error.code === "model_unavailable" || error.code === "provider_unsupported" ? 422
-          : error.code === "timeout" ? 504
+          : error.code === "visual_rate_limited" ? 429
+            : error.code === "timeout" ? 504
             : error.code === "cancelled" ? 408
               : 500;
     return NextResponse.json({ error: { code: error.code, message: error.message, retryable: error.retryable } }, { status });

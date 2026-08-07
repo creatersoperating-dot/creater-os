@@ -39,7 +39,7 @@ test("provider-specific duration rejection occurs before claim", () => {
   const providerError = service.indexOf('durationEligibility.violation === "provider_limit_exceeded"', validation);
   const claim = service.indexOf('this.db.rpc("claim_video_generation_operation"', providerError);
   assert.ok(validation >= 0 && validation < providerError && providerError < claim);
-  assert.match(service, /adapter\.descriptor\.capabilities\.maximumDurationMs/);
+  assert.match(service, /rendererAdapter\.descriptor\.capabilities\.maximumDurationMs/);
   assert.match(service, /provider_duration_unsupported/);
   assert.match(service, /supports videos up to.*minutes/);
 });

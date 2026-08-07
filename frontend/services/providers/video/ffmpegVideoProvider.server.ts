@@ -17,10 +17,9 @@ import { preflightMediaCapabilities } from "./mediaCapabilityPreflight.server";
 import { ProcessTerminationUnconfirmedError, runMediaProcess, type MediaProcessRequest, type MediaProcessResult, type MediaProcessRunner } from "./mediaProcess.server";
 
 import type {
-  VideoProviderAdapter,
+  VideoRendererAdapter,
   VideoRenderRequest,
   VideoRenderVisualAssetInput,
-  VideoVisualAssetResult,
 } from "./videoProviderTypes";
 import { VideoProviderError } from "./videoProviderTypes";
 
@@ -30,7 +29,6 @@ const HEIGHT = 720;
 const FRAME_RATE = 30;
 const MAX_SCENES = 24;
 const MAX_OUTPUT_BYTES = 200 * 1024 * 1024;
-const encoder = new TextEncoder();
 
 export type FfmpegProcessRequest = MediaProcessRequest;
 export type FfmpegProcessRunner = MediaProcessRunner;
@@ -46,34 +44,6 @@ export interface FfmpegProviderOptions {
   probeOutput?: (request: ProbeRenderedVideoRequest) => Promise<ProbedVideoMetadata>;
   preflight?: (request: VideoRenderRequest) => Promise<void>;
   cleanupRetryDelaysMs?: readonly number[];
-}
-
-function escapeXml(value: string): string {
-  return value.replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" })[character] ?? character);
-}
-
-function clipped(value: string, maximum: number): string {
-  const compact = value.replace(/\s+/g, " ").trim();
-  return compact.length <= maximum ? compact : `${compact.slice(0, maximum - 1)}…`;
-}
-
-function makeAuthoritativeSvg(request: VideoRenderRequest, index: number): string {
-  const scene = request.scenes[index];
-  const hue = (scene.sceneNumber * 53 + 211) % 360;
-  const excerpt = clipped(scene.narrationText || scene.visualPrompt, 110);
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="480" height="270" viewBox="0 0 480 270"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop stop-color="hsl(${hue} 78% 32%)"/><stop offset="1" stop-color="hsl(${(hue + 72) % 360} 75% 12%)"/></linearGradient></defs><rect width="480" height="270" fill="url(#g)"/><circle cx="430" cy="45" r="75" fill="white" opacity=".08"/><text x="28" y="38" font-family="Arial,sans-serif" font-size="12" fill="white" opacity=".78">CREATOROS VIDEO · SCENE ${scene.sceneNumber}/${request.scenes.length}</text><text x="28" y="100" font-family="Arial,sans-serif" font-weight="700" font-size="27" fill="white">${escapeXml(clipped(scene.title, 31))}</text><foreignObject x="28" y="120" width="410" height="92"><div xmlns="http://www.w3.org/1999/xhtml" style="font:16px/1.45 Arial,sans-serif;color:white;opacity:.9">${escapeXml(excerpt)}</div></foreignObject><text x="28" y="246" font-family="Arial,sans-serif" font-size="11" fill="white" opacity=".7">${escapeXml(clipped(request.projectTitle, 48))} · ${escapeXml(scene.visualType)}</text></svg>`;
-}
-
-function generatedVisualAssets(request: VideoRenderRequest): VideoVisualAssetResult[] {
-  return request.scenes.map((scene, index) => ({
-    sceneId: scene.id,
-    sceneNumber: scene.sceneNumber,
-    bytes: encoder.encode(makeAuthoritativeSvg(request, index)),
-    format: "svg",
-    mimeType: "image/svg+xml",
-    width: 480,
-    height: 270,
-  }));
 }
 
 function abortError(signal?: AbortSignal): VideoProviderError {
@@ -104,7 +74,7 @@ export function runFfmpegProcess(request: FfmpegProcessRequest): Promise<MediaPr
   });
 }
 
-function validateRequest(request: VideoRenderRequest, requireAssets: boolean): number {
+function validateRequest(request: VideoRenderRequest): number {
   if (request.model !== MODEL) throw new VideoProviderError("model_unavailable", "The configured FFmpeg video model is unsupported.");
   if (!request.projectId.trim() || request.scenes.length < 1 || request.scenes.length > MAX_SCENES) {
     throw new VideoProviderError("invalid_request", "The video render request is invalid.");
@@ -118,7 +88,7 @@ function validateRequest(request: VideoRenderRequest, requireAssets: boolean): n
     || request.scenes.some((scene, index) => !Number.isSafeInteger(scene.durationMs) || scene.durationMs < 1 || scene.sceneNumber !== index + 1)) {
     throw new VideoProviderError("duration_unsupported", "The FFmpeg renderer supports videos up to 30 minutes.");
   }
-  if (requireAssets) validateVisualAssetOrder(request.scenes, request.visualAssets);
+  validateVisualAssetOrder(request.scenes, request.visualAssets);
   throwIfAborted(request.signal);
   return durationMs;
 }
@@ -215,7 +185,7 @@ async function removeTemporaryDirectoryWithRetries(
   throw new VideoProviderError("cleanup_failed", "Temporary video render files could not be removed.", true);
 }
 
-export function createFfmpegVideoProvider(options: FfmpegProviderOptions): VideoProviderAdapter {
+export function createFfmpegVideoProvider(options: FfmpegProviderOptions): VideoRendererAdapter {
   const runProcess = options.runProcess ?? runFfmpegProcess;
   const createTemporaryDirectory = options.createTemporaryDirectory
     ?? (() => mkdtemp(path.join(tmpdir(), "creatoros-ffmpeg-")));
@@ -241,20 +211,13 @@ export function createFfmpegVideoProvider(options: FfmpegProviderOptions): Video
       developmentOnly: false,
       capabilities: { containers: ["mp4"], supportsAudioMux: true, maximumDurationMs: CREATOROS_MAX_VIDEO_DURATION_MS, maximumScenes: MAX_SCENES },
     },
-    async generateVisualAssets(request) {
-      validateRequest(request, false);
-      const assets = generatedVisualAssets(request);
-      await request.heartbeat?.();
-      throwIfAborted(request.signal);
-      return assets;
-    },
     async render(request) {
-      validateRequest(request, true);
+      validateRequest(request);
       const validatedWav = validateCreatorOsWav(request.audio.bytes, request.audio.durationMs);
       const timeline = extendFinalSceneForNarration(request.scenes, validatedWav.durationCeilingMs);
       const visualAssets = request.visualAssets as readonly VideoRenderVisualAssetInput[];
       let directory: string | null = null;
-      let result: Awaited<ReturnType<VideoProviderAdapter["render"]>> | null = null;
+      let result: Awaited<ReturnType<VideoRendererAdapter["render"]>> | null = null;
       let renderFailure: unknown;
       let deferredClose: Promise<void> | null = null;
       try {

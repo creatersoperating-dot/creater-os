@@ -4,7 +4,7 @@ const test = require("node:test");
 
 const { preflightMediaCapabilities, clearMediaCapabilityPreflightCacheForTests } = require("../providers/video/mediaCapabilityPreflight.server.ts");
 const { getVideoProviderConfiguration } = require("../providers/video/videoProviderConfig.server.ts");
-const { getConfiguredVideoProvider } = require("../providers/video/videoProviderRegistry.server.ts");
+const { getConfiguredVideoRenderer } = require("../providers/video/videoProviderRegistry.server.ts");
 const { VideoProviderError } = require("../providers/video/videoProviderTypes.ts");
 const { videoApiError } = require("./videoApiResponse.server.ts");
 
@@ -39,7 +39,7 @@ async function mapped(action) {
 }
 
 test("provider-disabled and invalid executable configuration retain sanitized nonretryable errors", async () => {
-  const disabled = await configured({}, () => mapped(getConfiguredVideoProvider));
+  const disabled = await configured({}, () => mapped(getConfiguredVideoRenderer));
   assert.deepEqual(disabled, { status: 503, body: { error: { code: "provider_disabled", message: "Video rendering is not configured.", retryable: false } } });
 
   const base = { CREATOROS_VIDEO_PROVIDER: "ffmpeg", CREATOROS_VIDEO_MODEL: "ffmpeg-h264-aac-v1" };
@@ -79,4 +79,16 @@ test("timeout and cancellation retain their retry flags while unknown errors sta
   assert.equal(cancellation.status, 408); assert.equal(cancellation.body.error.retryable, true);
   const unknown = await mapped(async () => { throw new Error("C:\\private\\unexpected detail"); });
   assert.deepEqual(unknown, { status: 500, body: { error: { code: "internal_error", message: "Video production failed.", retryable: true } } });
+});
+
+test("visual-provider API errors preserve only sanitized code, message, and retryability", async () => {
+  const limited = await mapped(async () => { throw new VideoProviderError("visual_rate_limited", "Visual generation was rate limited.", true); });
+  assert.deepEqual(limited, { status: 429, body: { error: {
+    code: "visual_rate_limited", message: "Visual generation was rate limited.", retryable: true,
+  } } });
+  const malformed = await mapped(async () => { throw new VideoProviderError("visual_response_invalid", "Gemini returned invalid image data.", false); });
+  assert.equal(malformed.status, 500);
+  assert.deepEqual(malformed.body.error, {
+    code: "visual_response_invalid", message: "Gemini returned invalid image data.", retryable: false,
+  });
 });
